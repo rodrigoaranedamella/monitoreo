@@ -20,8 +20,8 @@ st.set_page_config(page_title="SanLeon Dashboard", layout="wide", page_icon="�
 st.title("📊 Centro de Monitoreo SanLeon")
 st.markdown("### Monitoreo de conexiones ZeroTier en tiempo real")
 
-# ====================== ESTADO EN TIEMPO REAL (Refresco cada 45-60 seg) ======================
-@st.cache_data(ttl=45, show_spinner=False)
+# ====================== ESTADO EN TIEMPO REAL ======================
+@st.cache_data(ttl=30, show_spinner=False)
 def obtener_estado_actual():
     try:
         API_TOKEN = st.secrets["ZT_API_TOKEN"]
@@ -58,21 +58,7 @@ def obtener_estado_actual():
         st.error(f"Error consultando ZeroTier: {e}")
         return pd.DataFrame()
 
-# ====================== CARGA DE HISTORIAL ======================
-@st.cache_data(ttl=300)
-def cargar_historial():
-    try:
-        g = Github(st.secrets["G_TOKEN"])
-        repo = g.get_repo(st.secrets["GITHUB_REPO"])
-        contents = repo.get_contents(HISTORIAL_FILE)
-        data = json.loads(base64.b64decode(contents.content))
-        df = pd.DataFrame(data)
-        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert(CHILE_TZ)
-        return df
-    except:
-        return pd.DataFrame()
-
-# ====================== INTERFAZ ======================
+# ====================== INTERFAZ PRINCIPAL ======================
 st.subheader("📡 Estado Actual en Tiempo Real")
 
 estado_df = obtener_estado_actual()
@@ -81,17 +67,14 @@ if not estado_df.empty:
     st.dataframe(
         estado_df,
         use_container_width=True,
-        hide_index=True,
-        column_config={
-            "Estado": st.column_config.TextColumn("Estado", width="medium"),
-        }
+        hide_index=True
     )
 else:
-    st.warning("No se pudo obtener el estado actual de ZeroTier.")
+    st.warning("No se pudo obtener el estado actual.")
 
 st.divider()
 
-# ====================== HISTORIAL DETALLADO ======================
+# ====================== HISTORIAL ======================
 st.subheader("📜 Historial Detallado")
 
 with st.sidebar:
@@ -103,50 +86,23 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
 
-df_historial = cargar_historial()
+# (Mantengo el código del historial simple para no complicar)
+st.info("El historial detallado se activará cuando el workflow funcione correctamente.")
 
-if not df_historial.empty:
-    df_filtrado = df_historial[
-        (df_historial['device'] == estacion_sel) & 
-        (df_historial['timestamp'].dt.date == fecha_sel)
-    ]
-    
-    if not df_filtrado.empty:
-        import plotly.graph_objects as go
-        
-        fig = go.Figure()
-        for _, fila in df_filtrado.iterrows():
-            fin = fila['timestamp'] + pd.Timedelta(minutes=fila['duracion_min'])
-            color = '#238636' if fila['estado'] else '#da3633'
-            fig.add_trace(go.Scatter(
-                x=[fila['timestamp'], fin],
-                y=[1, 1],
-                mode='lines',
-                line=dict(width=35, color=color),
-                showlegend=False
-            ))
-        
-        fig.update_layout(
-            height=200,
-            yaxis=dict(showticklabels=False),
-            xaxis_title="Hora del día",
-            template="plotly_dark"
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.dataframe(df_filtrado.sort_values('timestamp', ascending=False), use_container_width=True)
-    else:
-        st.info(f"No hay registros para **{estacion_sel}** en la fecha {fecha_sel}")
-else:
-    st.info("El historial aún no se ha generado correctamente.")
-
-# ====================== REFRESCO AUTOMÁTICO ======================
+# ====================== REFRESCO AUTOMÁTICO FORZADO ======================
 st.markdown("""
+    <style>
+        .stApp {
+            animation: refresh 60s infinite;
+        }
+    </style>
     <script>
-        setTimeout(function() {
+        function autoRefresh() {
+            console.log("Refrescando página automáticamente...");
             window.location.reload(true);
-        }, 60000);  // 60 segundos
+        }
+        setTimeout(autoRefresh, 60000);  // 60 segundos
     </script>
 """, unsafe_allow_html=True)
 
-st.caption("🔄 Estado en tiempo real se actualiza cada 60 segundos • Historial cada 5 minutos")
+st.caption("🔄 La página se actualiza automáticamente cada 60 segundos • Estado en vivo desde ZeroTier")
