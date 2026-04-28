@@ -8,7 +8,6 @@ import os
 from github import Github
 from datetime import datetime
 
-# Configuración desde Secrets de GitHub
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
@@ -23,73 +22,61 @@ def run_monitor():
     repo = g.get_repo(GITHUB_REPO)
     ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
     
-    # Leer historial actual
+    # Leer historial
     try:
         contents = repo.get_contents(HISTORIAL_FILE)
         df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert(CHILE_TZ)
     except:
-        # Si no existe, crear vacío
         df = pd.DataFrame(columns=['timestamp', 'estado', 'duracion_min', 'device'])
 
-    # Consultar ZeroTier (usamos lastSeen que es el campo actual)
+    # Consultar ZeroTier
     res = requests.get(
         f'https://api.zerotier.com/api/v1/network/{NETWORK_ID}/member',
         headers={'Authorization': f'token {API_TOKEN}'}
     ).json()
 
-    nuevos_registros = []
-
     for nombre in ESTACIONES:
         m = next((item for item in res if item.get('name') == nombre), {})
         
+        # Usar lastSeen (campo recomendado actualmente)
         last_seen = m.get('lastSeen') or m.get('lastOnline', 0)
-        # Consideramos "online" si habló con el controlador en los últimos 5 minutos
-        is_on = ((time.time() * 1000 - last_seen) / 1000) < 300  
-
-        mask = df['device'] == nombre
-        registros_device = df[mask].copy()
+        segundos_desde_ultima = (time.time() * 1000 - last_seen) / 1000
         
-        if not registros_device.empty:
-            idx = registros_device.index[-1]
+        is_on = segundos_desde_ultima < 600   # 10 minutos (más tolerante)
+
+        # Buscar último registro de este dispositivo
+        mask = df['device'] == nombre
+        if not df[mask].empty:
+            idx = df[mask].index[-1]
             ultimo_estado = df.at[idx, 'estado']
-            ultimo_ts = df.at[idx, 'timestamp']
             
-            if ultimo_estado == is_on and ultimo_ts.date() == ahora.date():
-                # Actualizar duración
-                diff = (ahora - ultimo_ts).total_seconds() / 60
+            if ultimo_estado == is_on and df.at[idx, 'timestamp'].date() == ahora.date():
+                diff = (ahora - df.at[idx, 'timestamp']).total_seconds() / 60
                 df.at[idx, 'duracion_min'] = round(max(diff, 0.1), 2)
-            else:
-                # Nuevo evento (cambio de estado o nuevo día)
-                nuevo = {'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}
-                nuevos_registros.append(nuevo)
-        else:
-            # Primera vez para este dispositivo
-            nuevo = {'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}
-            nuevos_registros.append(nuevo)
+                continue
+        
+        # Si cambió de estado o es primer registro del día
+        nuevo = pd.DataFrame([{
+            'timestamp': ahora,
+            'estado': is_on,
+            'duracion_min': 0.1,
+            'device': nombre
+        }])
+        df = pd.concat([df, nuevo], ignore_index=True)
 
-    if nuevos_registros:
-        df = pd.concat([df, pd.DataFrame(nuevos_registros)], ignore_index=True)
-
-    # Guardar en GitHub
-    df_sorted = df.sort_values(['device', 'timestamp'])
-    df_sorted['timestamp'] = df_sorted['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
+    # Guardar
+    df = df.sort_values(['device', 'timestamp']).reset_index(drop=True)
+    df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
     
-    new_content = df_sorted.to_json(orient='records')
+    new_content = df.to_json(orient='records')
     
-    if 'contents' in locals():
-        repo.update_file(
-            path=contents.path,
-            message=f"Auto-Monitor: {ahora.strftime('%Y-%m-%d %H:%M')}",
-            content=new_content,
-            sha=contents.sha
-        )
-    else:
-        repo.create_file(
-            path=HISTORIAL_FILE,
-            message="Inicializando historial_conexiones.json",
-            content=new_content
-        )
+    repo.update_file(
+        path=HISTORIAL_FILE,
+        message=f"Auto-Monitor: {ahora.strftime('%Y-%m-%d %H:%M')}",
+        content=new_content,
+        sha=contents.sha
+    )
 
 if __name__ == "__main__":
     run_monitor()
