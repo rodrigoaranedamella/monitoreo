@@ -26,7 +26,7 @@ def run_monitor():
     
     try:
         g = Github(G_TOKEN)
-        repo = g.get_repo(GITHUB_REPO)
+        repo = g.get_repo(REPO_NAME)
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
         print(f"Hora actual: {ahora}")
 
