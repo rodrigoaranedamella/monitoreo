@@ -10,7 +10,14 @@ from datetime import datetime
 # ==================== CONFIGURACIÓN ====================
 CHILE_TZ = pytz.timezone('America/Santiago')
 HISTORIAL_FILE = 'historial_conexiones.json'
-ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON"]
+ESTACIONES = [
+    "Marian_SANLEON",
+    "Andrea_SANLEON",
+    "Carmily_SANLEON",
+    "Matias_SANLEON",
+    "Jennifer_SANLEON",
+    "Jennifer2_SANLEON"
+]
 
 st.set_page_config(page_title="SanLeon Dashboard", layout="wide", page_icon="🛡️")
 
