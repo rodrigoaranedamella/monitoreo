@@ -6,7 +6,6 @@ import base64
 import requests
 import time
 from github import Github
-from datetime import datetime
 
 CHILE_TZ = pytz.timezone('America/Santiago')
 HISTORIAL_FILE = 'historial_conexiones.json'
@@ -21,8 +20,8 @@ st.set_page_config(page_title="SanLeon Dashboard", layout="wide", page_icon="�
 st.title("📊 Centro de Monitoreo SanLeon")
 st.markdown("### Monitoreo de conexiones ZeroTier en tiempo real")
 
-# ====================== CONSULTA EN TIEMPO REAL ======================
-@st.cache_data(ttl=60)  # Se refresca cada 60 segundos
+# ====================== ESTADO EN TIEMPO REAL (Refresco cada 45-60 seg) ======================
+@st.cache_data(ttl=45, show_spinner=False)
 def obtener_estado_actual():
     try:
         API_TOKEN = st.secrets["ZT_API_TOKEN"]
@@ -42,7 +41,7 @@ def obtener_estado_actual():
             last_seen = m.get('lastSeen') or m.get('lastOnline', 0)
             
             segundos_inactivo = (time.time() * 1000 - last_seen) / 1000
-            is_online = segundos_inactivo < 900  # 15 minutos de tolerancia
+            is_online = segundos_inactivo < 900  # 15 minutos
 
             ultima_conexion = pd.to_datetime(last_seen, unit='ms', utc=True).tz_convert(CHILE_TZ) if last_seen > 0 else None
 
@@ -74,9 +73,10 @@ def cargar_historial():
         return pd.DataFrame()
 
 # ====================== INTERFAZ ======================
+st.subheader("📡 Estado Actual en Tiempo Real")
+
 estado_df = obtener_estado_actual()
 
-st.subheader("📡 Estado Actual en Tiempo Real")
 if not estado_df.empty:
     st.dataframe(
         estado_df,
@@ -84,7 +84,6 @@ if not estado_df.empty:
         hide_index=True,
         column_config={
             "Estado": st.column_config.TextColumn("Estado", width="medium"),
-            "Última conexión": st.column_config.TextColumn("Última conexión", width="medium"),
         }
     )
 else:
@@ -114,8 +113,8 @@ if not df_historial.empty:
     
     if not df_filtrado.empty:
         import plotly.graph_objects as go
-        fig = go.Figure()
         
+        fig = go.Figure()
         for _, fila in df_filtrado.iterrows():
             fin = fila['timestamp'] + pd.Timedelta(minutes=fila['duracion_min'])
             color = '#238636' if fila['estado'] else '#da3633'
@@ -139,6 +138,15 @@ if not df_historial.empty:
     else:
         st.info(f"No hay registros para **{estacion_sel}** en la fecha {fecha_sel}")
 else:
-    st.info("El historial aún no se ha generado. Ejecuta el monitor desde GitHub Actions.")
+    st.info("El historial aún no se ha generado correctamente.")
+
+# ====================== REFRESCO AUTOMÁTICO ======================
+st.markdown("""
+    <script>
+        setTimeout(function() {
+            window.location.reload(true);
+        }, 60000);  // 60 segundos
+    </script>
+""", unsafe_allow_html=True)
 
 st.caption("🔄 Estado en tiempo real se actualiza cada 60 segundos • Historial cada 5 minutos")
