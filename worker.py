@@ -11,7 +11,7 @@ import os
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
-GITHUB_REPO = os.getenv("REPO_NAME")
+GITHUB_REPO = os.getenv("REPO_NAME") # Mantenemos REPO_NAME como origen del env
 
 CHILE_TZ = pytz.timezone('America/Santiago')
 HISTORIAL_FILE = 'historial_conexiones.json'
@@ -22,11 +22,11 @@ ESTACIONES = [
 ]
 
 def run_monitor():
-    print("=== ZERO TIER MONITOR - VERSIÓN DEFINITIVA SIMPLE ===")
+    print("=== ZERO TIER MONITOR - VERSIÓN CORREGIDA ===")
     
     try:
         g = Github(G_TOKEN)
-#repo = g.get_repo(REPO_NAME)
+        # CORRECCIÓN AQUÍ: Usamos GITHUB_REPO que es la variable definida arriba
         repo = g.get_repo(GITHUB_REPO)
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
         print(f"Hora actual: {ahora}")
@@ -35,6 +35,7 @@ def run_monitor():
         try:
             contents = repo.get_contents(HISTORIAL_FILE)
             df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
             print(f"Historial cargado: {len(df)} registros")
         except Exception:
             print("Creando nuevo historial por primera vez...")
@@ -54,22 +55,26 @@ def run_monitor():
 
             print(f"{nombre:20} → {'🟢 ONLINE' if is_on else '🔴 OFFLINE'}")
 
-            # Lógica simple
+            # Lógica de actualización
             mask = df['device'] == nombre
             if not df[mask].empty:
                 idx = df[mask].index[-1]
-                if df.at[idx, 'estado'] == is_on and df.at[idx, 'timestamp'].date() == ahora.date():
+                # Si el estado es igual, solo actualizamos duración
+                if df.at[idx, 'estado'] == is_on:
                     diff = (ahora - df.at[idx, 'timestamp']).total_seconds() / 60
                     df.at[idx, 'duracion_min'] = round(max(diff, 0.1), 2)
                     continue
 
+            # Si el estado cambió, creamos nueva entrada
             nuevo = pd.DataFrame([{'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}])
             df = pd.concat([df, nuevo], ignore_index=True)
 
         # Guardar
         df = df.sort_values(['device', 'timestamp']).reset_index(drop=True)
-        df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
-        new_content = df.to_json(orient='records')
+        # Convertir a string para JSON
+        df_save = df.copy()
+        df_save['timestamp'] = df_save['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
+        new_content = df_save.to_json(orient='records')
 
         if contents:
             repo.update_file(
