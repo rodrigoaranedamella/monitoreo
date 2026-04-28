@@ -4,3 +4,4 @@ plotly
 pytz
 PyGithub
 requests
+streamlit-autorefresh
