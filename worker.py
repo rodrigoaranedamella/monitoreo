@@ -18,20 +18,19 @@ HISTORIAL_FILE = 'historial_conexiones.json'
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
 def run_monitor():
-    print("=== INICIANDO MONITOR SIMPLE ===")
-    
+    print("=== ZERO TIER MONITOR - VERSIÓN FINAL SIMPLE ===")
     try:
         g = Github(G_TOKEN)
         repo = g.get_repo(GITHUB_REPO)
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
         print(f"Hora: {ahora}")
 
-        # Cargar o crear historial
+        # Cargar historial o crear nuevo
         try:
             contents = repo.get_contents(HISTORIAL_FILE)
             df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
             print(f"Historial cargado: {len(df)} registros")
-        except:
+        except Exception:
             print("Creando nuevo historial...")
             df = pd.DataFrame(columns=['timestamp', 'estado', 'duracion_min', 'device'])
             contents = None
@@ -49,7 +48,6 @@ def run_monitor():
 
             print(f"{nombre:20} → {'ONLINE' if is_on else 'OFFLINE'}")
 
-            # Actualizar o crear
             mask = df['device'] == nombre
             if not df[mask].empty:
                 idx = df[mask].index[-1]
@@ -71,10 +69,12 @@ def run_monitor():
         else:
             repo.create_file(path=HISTORIAL_FILE, message="Inicializando historial", content=new_content)
 
-        print("✅ ÉXITO - Historial guardado")
+        print("✅ HISTORIAL GUARDADO CON ÉXITO")
 
     except Exception as e:
         print(f"❌ ERROR: {type(e).__name__} - {e}")
+        import traceback
+        traceback.print_exc()
         raise
 
 if __name__ == "__main__":
