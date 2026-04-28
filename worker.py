@@ -11,7 +11,7 @@ import os
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
-GITHUB_REPO = os.getenv("GITHUB_REPO")
+GITHUB_REPO = os.getenv("rodrigoaranedamella/monitoreo")
 
 CHILE_TZ = pytz.timezone('America/Santiago')
 HISTORIAL_FILE = 'historial_conexiones.json'
