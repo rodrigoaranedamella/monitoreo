@@ -2,8 +2,8 @@ name: ZeroTier Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'     # Cada 5 minutos
-  workflow_dispatch:          # Ejecución manual
+    - cron: '*/5 * * * *'     # Cada 5 minutos (estándar de GitHub)
+  workflow_dispatch:          # Permite ejecución manual
 
 jobs:
   monitor:
@@ -27,5 +27,6 @@ jobs:
           ZT_API_TOKEN: ${{ secrets.ZT_API_TOKEN }}
           ZT_NETWORK_ID: ${{ secrets.ZT_NETWORK_ID }}
           G_TOKEN: ${{ secrets.G_TOKEN }}
-          GITHUB_REPO: ${{ secrets.REPO_NAME }}
+          # Usamos REPO_NAME para que coincida con os.getenv("REPO_NAME")
+          REPO_NAME: "rodrigoaranedamella/monitoreo"
         run: python worker.py
