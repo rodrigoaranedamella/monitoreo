@@ -3,7 +3,7 @@ name: ZeroTier Monitor
 on:
   schedule:
     - cron: '*/5 * * * *'     # Cada 5 minutos
-  workflow_dispatch:          # Permite ejecución manual
+  workflow_dispatch:          # Ejecución manual
 
 jobs:
   monitor:
