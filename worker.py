@@ -7,7 +7,6 @@ import base64
 import os
 from github import Github
 
-# Configuración desde Secrets
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
@@ -17,42 +16,47 @@ CHILE_TZ = pytz.timezone('America/Santiago')
 HISTORIAL_FILE = 'historial_conexiones.json'
 
 ESTACIONES = [
-    "Marian_SANLEON",
-    "Andrea_SANLEON",
-    "Carmily_SANLEON",
-    "Matias_SANLEON",
-    "Jennifer_SANLEON",
-    "Jennifer2_SANLEON"
+    "Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON",
+    "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"
 ]
 
 def run_monitor():
+    print("🚀 Iniciando ZeroTier Monitor...")
+
     try:
         g = Github(G_TOKEN)
         repo = g.get_repo(GITHUB_REPO)
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
+        print(f"🕒 Hora: {ahora}")
 
         # Leer historial o crear nuevo
         try:
             contents = repo.get_contents(HISTORIAL_FILE)
             df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert(CHILE_TZ)
+            print(f"📂 Historial cargado: {len(df)} registros")
         except:
+            print("🆕 Creando nuevo historial...")
             df = pd.DataFrame(columns=['timestamp', 'estado', 'duracion_min', 'device'])
             contents = None
 
         # Consultar ZeroTier
+        print("🌐 Consultando ZeroTier...")
         res = requests.get(
             f'https://api.zerotier.com/api/v1/network/{NETWORK_ID}/member',
             headers={'Authorization': f'token {API_TOKEN}'}
-        ).json()
+        )
+        print(f"   Código respuesta: {res.status_code}")
+
+        members = res.json()
 
         for nombre in ESTACIONES:
-            m = next((item for item in res if item.get('name') == nombre), {})
-            
+            m = next((item for item in members if item.get('name') == nombre), {})
             last_seen = m.get('lastSeen') or m.get('lastOnline', 0)
-            is_on = ((time.time() * 1000 - last_seen) / 1000) < 600  # 10 minutos
+            is_on = ((time.time() * 1000 - last_seen) / 1000) < 900   # 15 minutos
 
-            # Actualizar o crear registro
+            print(f"   {nombre:20} → {'🟢 ONLINE' if is_on else '🔴 OFFLINE'}")
+
             mask = df['device'] == nombre
             if not df[mask].empty:
                 idx = df[mask].index[-1]
@@ -61,16 +65,10 @@ def run_monitor():
                     df.at[idx, 'duracion_min'] = round(max(diff, 0.1), 2)
                     continue
 
-            # Nuevo evento
-            nuevo = pd.DataFrame([{
-                'timestamp': ahora,
-                'estado': is_on,
-                'duracion_min': 0.1,
-                'device': nombre
-            }])
+            nuevo = pd.DataFrame([{'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}])
             df = pd.concat([df, nuevo], ignore_index=True)
 
-        # Guardar en GitHub
+        # Guardar
         df = df.sort_values(['device', 'timestamp']).reset_index(drop=True)
         df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
         new_content = df.to_json(orient='records')
@@ -88,11 +86,11 @@ def run_monitor():
                 message="Inicializando historial_conexiones.json",
                 content=new_content
             )
-
-        print("✅ Monitor ejecutado correctamente")
+        
+        print("✅ Historial guardado correctamente en GitHub")
 
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"💥 ERROR: {type(e).__name__} - {str(e)}")
         raise
 
 if __name__ == "__main__":
