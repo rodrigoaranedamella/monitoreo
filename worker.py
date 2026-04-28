@@ -7,7 +7,6 @@ import base64
 import pandas as pd
 from github import Github
 
-# ==================== CONFIG ====================
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
@@ -21,17 +20,16 @@ ESTACIONES = [
     "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"
 ]
 
-# ==================== MAIN ====================
 def run_monitor():
-    print("🚀 Iniciando ZeroTier Monitor - Versión Mínima")
+    print("🚀 Iniciando ZeroTier Monitor - Versión Ultra Simple")
 
     try:
         g = Github(G_TOKEN)
         repo = g.get_repo(GITHUB_REPO)
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
-        print(f"🕒 {ahora}")
+        print(f"🕒 Hora: {ahora}")
 
-        # Cargar historial o crear nuevo
+        # Cargar historial o crear vacío
         try:
             contents = repo.get_contents(HISTORIAL_FILE)
             df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
@@ -50,38 +48,12 @@ def run_monitor():
         for nombre in ESTACIONES:
             m = next((item for item in res if item.get('name') == nombre), {})
             last_seen = m.get('lastSeen') or m.get('lastOnline', 0)
-            is_on = (time.time() * 1000 - last_seen) / 1000 < 900   # 15 minutos
+            is_on = ((time.time() * 1000 - last_seen) / 1000) < 900
 
-            print(f"   {nombre:20} → {'🟢 ONLINE' if is_on else '🔴 OFFLINE'}")
+            print(f"   {nombre:25} → {'🟢 ONLINE' if is_on else '🔴 OFFLINE'}")
 
-            # Buscar último registro
+            # Actualizar duración o crear nuevo registro
             mask = df['device'] == nombre
             if not df[mask].empty:
                 idx = df[mask].index[-1]
-                if df.at[idx, 'estado'] == is_on and df.at[idx, 'timestamp'].date() == ahora.date():
-                    diff = (ahora - df.at[idx, 'timestamp']).total_seconds() / 60
-                    df.at[idx, 'duracion_min'] = round(max(diff, 0.1), 2)
-                    continue
-
-            # Nuevo registro
-            nuevo = pd.DataFrame([{'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}])
-            df = pd.concat([df, nuevo], ignore_index=True)
-
-        # Guardar
-        df = df.sort_values(['device', 'timestamp']).reset_index(drop=True)
-        df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
-        new_content = df.to_json(orient='records')
-
-        if contents:
-            repo.update_file(path=HISTORIAL_FILE, message=f"Auto-Monitor {ahora.strftime('%H:%M')}", content=new_content, sha=contents.sha)
-        else:
-            repo.create_file(path=HISTORIAL_FILE, message="Inicializando historial_conexiones.json", content=new_content)
-
-        print("✅ Historial guardado correctamente!")
-
-    except Exception as e:
-        print(f"💥 ERROR: {type(e).__name__} - {e}")
-        raise
-
-if __name__ == "__main__":
-    run_monitor()
+                if df.at[idx, 'estado'] == is_on and df.at
