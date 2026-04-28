@@ -7,7 +7,6 @@ import base64
 import os
 from github import Github
 
-# Secrets
 API_TOKEN = os.getenv("ZT_API_TOKEN")
 NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 G_TOKEN = os.getenv("G_TOKEN")
@@ -22,58 +21,38 @@ ESTACIONES = [
 ]
 
 def run_monitor():
-    print("🚀 Iniciando ZeroTier Monitor...")
-    print(f"📍 Repositorio: {GITHUB_REPO}")
-    print(f"🔑 ZT_NETWORK_ID: {NETWORK_ID[:10]}... (longitud: {len(NETWORK_ID) if NETWORK_ID else 0})")
+    print("🚀 Iniciando ZeroTier Monitor v2...")
 
     try:
-        # 1. Conexión a GitHub
-        print("🔗 Conectando a GitHub...")
         g = Github(G_TOKEN)
         repo = g.get_repo(GITHUB_REPO)
-        print("✅ Conexión a GitHub exitosa")
-
         ahora = pd.Timestamp.now(tz=CHILE_TZ).floor('S')
-        print(f"🕒 Hora actual: {ahora}")
+        print(f"🕒 Hora: {ahora}")
 
-        # 2. Leer o crear historial
+        # Leer historial o crear nuevo
         try:
             contents = repo.get_contents(HISTORIAL_FILE)
-            raw = base64.b64decode(contents.content).decode('utf-8')
-            df = pd.DataFrame(json.loads(raw))
+            df = pd.DataFrame(json.loads(base64.b64decode(contents.content)))
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert(CHILE_TZ)
-            print(f"📂 Historial cargado con {len(df)} registros")
-        except Exception as e:
-            print(f"⚠️ No se encontró historial o error al leerlo: {e}")
+            print(f"📂 Historial cargado: {len(df)} registros")
+        except:
+            print("🆕 Creando nuevo historial...")
             df = pd.DataFrame(columns=['timestamp', 'estado', 'duracion_min', 'device'])
             contents = None
-            print("🆕 Se creará un nuevo historial")
 
-        # 3. Consultar ZeroTier
-        print("🌐 Consultando API de ZeroTier...")
+        # Consultar ZeroTier
         res = requests.get(
             f'https://api.zerotier.com/api/v1/network/{NETWORK_ID}/member',
             headers={'Authorization': f'token {API_TOKEN}'}
-        )
-        print(f"📡 Respuesta ZeroTier: código {res.status_code}")
+        ).json()
 
-        if res.status_code != 200:
-            print(f"❌ Error en ZeroTier API: {res.text}")
-            raise Exception(f"ZeroTier API error: {res.status_code}")
-
-        members = res.json()
-
-        # 4. Procesar cada estación
         for nombre in ESTACIONES:
-            m = next((item for item in members if item.get('name') == nombre), {})
+            m = next((item for item in res if item.get('name') == nombre), {})
             last_seen = m.get('lastSeen') or m.get('lastOnline', 0)
-            segundos_off = (time.time() * 1000 - last_seen) / 1000
-            is_on = segundos_off < 600
+            is_on = ((time.time() * 1000 - last_seen) / 1000) < 600   # 10 minutos
 
-            status = "🟢 ONLINE" if is_on else "🔴 OFFLINE"
-            print(f"   {nombre:20} → {status} (última vez hace {int(segundos_off)} seg)")
+            print(f"   {nombre:20} → {'🟢 ONLINE' if is_on else '🔴 OFFLINE'}")
 
-            # Lógica de actualización
             mask = df['device'] == nombre
             if not df[mask].empty:
                 idx = df[mask].index[-1]
@@ -83,7 +62,29 @@ def run_monitor():
                     continue
 
             # Nuevo registro
-            nuevo = pd.DataFrame([{'timestamp': ahora, 'estado': is_on, 'duracion_min': 0.1, 'device': nombre}])
+            nuevo = pd.DataFrame([{
+                'timestamp': ahora,
+                'estado': is_on,
+                'duracion_min': 0.1,
+                'device': nombre
+            }])
             df = pd.concat([df, nuevo], ignore_index=True)
 
-        # 
+        # Guardar
+        df = df.sort_values(['device', 'timestamp']).reset_index(drop=True)
+        df['timestamp'] = df['timestamp'].dt.strftime('%Y-%m-%dT%H:%M:%S%z')
+        new_content = df.to_json(orient='records')
+
+        if contents:
+            repo.update_file(path=HISTORIAL_FILE, message=f"Auto-Monitor: {ahora}", content=new_content, sha=contents.sha)
+        else:
+            repo.create_file(path=HISTORIAL_FILE, message="Inicializando historial_conexiones.json", content=new_content)
+
+        print("✅ ¡Éxito! Historial actualizado.")
+
+    except Exception as e:
+        print(f"💥 ERROR: {e}")
+        raise
+
+if __name__ == "__main__":
+    run_monitor()
