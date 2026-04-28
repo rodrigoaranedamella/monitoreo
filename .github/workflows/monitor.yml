@@ -27,5 +27,5 @@ jobs:
           ZT_API_TOKEN: ${{ secrets.ZT_API_TOKEN }}
           ZT_NETWORK_ID: ${{ secrets.ZT_NETWORK_ID }}
           G_TOKEN: ${{ secrets.G_TOKEN }}
-          GITHUB_REPO: ${{ secrets.GITHUB_REPO }}
+          GITHUB_REPO: ${{ secrets.REPO_NAME }}
         run: python worker.py
