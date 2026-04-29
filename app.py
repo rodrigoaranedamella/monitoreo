@@ -6,14 +6,15 @@ import time
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 
-# 1. Configuración de página y optimización de espacio
+# 1. Configuración de página
 st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide", page_icon="📊")
 
 st.markdown("""
     <style>
         .block-container { padding-top: 0.5rem; padding-bottom: 0rem; margin-top: -1.5rem; }
         h2 { margin-top: -0.5rem; margin-bottom: 0.5rem; font-size: 1.5rem; }
-        .stMetric { background-color: #1e2127; padding: 10px; border-radius: 5px; border: 1px solid #444; }
+        .stMetric { background-color: #1e2127; padding: 15px; border-radius: 10px; border: 1px solid #444; }
+        [data-testid="stMetricValue"] { font-size: 1.8rem !important; color: #00CC96 !important; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -39,12 +40,10 @@ def obtener_vivo():
             online = (ahora_ms - ls) / 1000 < 900
             ts = pd.to_datetime(ls, unit='ms', utc=True).tz_convert(CHILE_TZ) if ls > 0 else None
             datos.append({
-                'Estación': n,
-                'Estado': "🟢 ONLINE" if online else "🔴 OFFLINE",
+                'Estación': n, 'Estado': "🟢 ONLINE" if online else "🔴 OFFLINE",
                 'Última conexión': ts.strftime('%H:%M:%S') if ts else "N/A",
                 'Inactivo hace': f"{int((ahora_ms - ls)/60000)} min" if ls > 0 else "---",
-                'raw_ts': ts,
-                'online_bool': online
+                'raw_ts': ts, 'online_bool': online
             })
         return pd.DataFrame(datos)
     except: return pd.DataFrame()
@@ -58,12 +57,10 @@ def cargar_historial():
         return df
     except: return pd.DataFrame()
 
-# ==========================================
-# INTERFAZ
-# ==========================================
+# --- INTERFAZ ---
 c1, c2 = st.columns([3, 1])
 with c1: st.subheader("📊 Monitor SanLeon")
-with c2: st.info(f"🕒 **Act:** {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')}")
+with c2: st.info(f"🕒 **Actual:** {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')}")
 
 df_vivo = obtener_vivo()
 col_tabla, col_controles = st.columns([3.8, 1.2])
@@ -87,64 +84,55 @@ if not h_df.empty:
     mask = (h_df['device'] == est_sel) & (h_df['timestamp'].dt.date == fec_sel)
     filtro = h_df.loc[mask].copy()
     
-    # Puente en vivo para la gráfica y el cálculo
+    # --- LOGICA DE MEZCLA HISTORIAL + VIVO ---
     info_vivo = df_vivo[df_vivo['Estación'] == est_sel].iloc[0]
-    if info_vivo['online_bool'] and fec_sel == pd.Timestamp.now(tz=CHILE_TZ).date():
+    es_hoy = (fec_sel == pd.Timestamp.now(tz=CHILE_TZ).date())
+    
+    if info_vivo['online_bool'] and es_hoy:
         ahora = pd.Timestamp.now(tz=CHILE_TZ)
+        # Si está online, proyectamos una conexión desde su última vista hasta 'ahora'
         inicio_vivo = info_vivo['raw_ts'] if info_vivo['raw_ts'] else ahora - pd.Timedelta(minutes=5)
+        # Garantizamos que el bloque vivo tenga al menos 10 min de visibilidad para que no se pierda
+        dur_viva = max(10, int((ahora - inicio_vivo).total_seconds() / 60))
         
-        # Calcular duración del bloque actual en vivo
-        duracion_actual = int((ahora - inicio_vivo).total_seconds() / 60)
         fila_live = pd.DataFrame([{
             'device': est_sel, 'estado': True, 'timestamp': inicio_vivo, 
-            'fin': ahora, 'Estado_Txt': "Conectado", 'duracion_min': max(5, duracion_actual)
+            'fin': ahora, 'Estado_Txt': "Conectado", 'duracion_min': dur_viva
         }])
         filtro = pd.concat([filtro, fila_live], ignore_index=True)
 
     if not filtro.empty:
-        filtro = filtro.sort_values('timestamp')
-        
-        # --- CÁLCULO DE TIEMPO TOTAL ---
-        total_minutos = filtro[filtro['estado'] == True]['duracion_min'].sum()
-        horas = total_minutos // 60
-        minutos = total_minutos % 60
-        txt_total = f"{horas} {'hora' if horas == 1 else 'horas'} con {minutos} {'minuto' if minutos == 1 else 'minutos'}"
-        
-        st.metric(label=f"Tiempo total de conexión: {est_sel}", value=txt_total)
+        # 1. TIEMPO TOTAL (Horas y Minutos)
+        total_m = int(filtro[filtro['estado'] == True]['duracion_min'].sum())
+        h, m = divmod(total_m, 60)
+        st.metric(label=f"Tiempo total de conexión: {est_sel}", 
+                  value=f"{h}.0 horas con {m}.0 minutos")
 
-        # --- LÓGICA DE CONTINUIDAD PARA LA GRÁFICA ---
+        # 2. GRÁFICA CON PUENTE DE CONTINUIDAD
+        filtro = filtro.sort_values('timestamp')
         filtro['Estado_Txt'] = filtro['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
-        filtro['fin'] = filtro['timestamp'].shift(-1)
-        gap_mask = (filtro['fin'] - filtro['timestamp']) > pd.Timedelta(minutes=30)
-        filtro.loc[filtro['fin'].isna() | gap_mask, 'fin'] = filtro['timestamp'] + pd.Timedelta(minutes=10)
+        filtro['fin_plot'] = filtro['timestamp'].shift(-1)
+        # Si el salto es pequeño (<35 min), unimos las barras visualmente para mostrar continuidad
+        gap_mask = (filtro['fin_plot'] - filtro['timestamp']) > pd.Timedelta(minutes=35)
+        filtro.loc[filtro['fin_plot'].isna() | gap_mask, 'fin_plot'] = filtro['timestamp'] + pd.Timedelta(minutes=10)
         
         inicio_eje = pd.Timestamp.combine(fec_sel, pd.Timestamp.min.time()).replace(tzinfo=CHILE_TZ)
         fin_eje = pd.Timestamp.combine(fec_sel, pd.Timestamp.max.time()).replace(tzinfo=CHILE_TZ)
 
-        fig = px.timeline(filtro, x_start="timestamp", x_end="fin", y="device", color="Estado_Txt",
+        fig = px.timeline(filtro, x_start="timestamp", x_end="fin_plot", y="device", color="Estado_Txt",
                           color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"})
-        fig.update_layout(xaxis=dict(range=[inicio_eje, fin_eje], dtick=7200000, tickformat="%H:%M", gridcolor="#333", title="Horas"),
+        fig.update_layout(xaxis=dict(range=[inicio_eje, fin_eje], dtick=7200000, tickformat="%H:%M", title="Horas"),
                           yaxis=dict(visible=False), height=140, margin=dict(l=10, r=10, t=10, b=10),
                           paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False)
         st.plotly_chart(fig, use_container_width=True)
 
-        # --- AGRUPACIÓN DE REGISTROS POR SESIÓN ---
-        # Si la diferencia entre registros es > 30 min, es una nueva sesión
-        filtro['nueva_sesion'] = (filtro['timestamp'].diff() > pd.Timedelta(minutes=30)).fillna(False).cumsum()
+        # 3. DETALLE DE SESIONES
+        filtro['nueva_sesion'] = (filtro['timestamp'].diff() > pd.Timedelta(minutes=35)).fillna(False).cumsum()
+        resumen = filtro[filtro['estado'] == True].groupby('nueva_sesion').agg({'timestamp': 'min', 'fin_plot': 'max', 'duracion_min': 'sum'}).reset_index()
+        resumen['Duración'] = resumen['duracion_min'].apply(lambda x: f"{int(x)} min")
         
-        resumen_sesiones = filtro[filtro['estado'] == True].groupby('nueva_sesion').agg({
-            'timestamp': 'min',
-            'fin': 'max',
-            'duracion_min': 'sum'
-        }).reset_index()
-        
-        resumen_sesiones['Hora Inicio'] = resumen_sesiones['timestamp'].dt.strftime('%H:%M:%S')
-        resumen_sesiones['Hora Fin'] = resumen_sesiones['fin'].dt.strftime('%H:%M:%S')
-        resumen_sesiones['Duración'] = resumen_sesiones['duracion_min'].apply(lambda x: f"{x} min")
-        resumen_sesiones['Visual'] = "🟢 Conectado"
-
         st.write("📜 **Detalle de Sesiones Acumuladas**")
-        st.dataframe(resumen_sesiones[['Hora Inicio', 'Hora Fin', 'Visual', 'Duración']].sort_values('Hora Inicio', ascending=False), 
-                     use_container_width=True, hide_index=True, height=300)
+        st.dataframe(resumen[['timestamp', 'fin_plot', 'Duración']].rename(columns={'timestamp': 'Inicio', 'fin_plot': 'Fin'}).sort_values('Inicio', ascending=False), 
+                     use_container_width=True, hide_index=True, height=250)
     else:
         st.info(f"Sin registros para {est_sel} el {fec_sel}.")
