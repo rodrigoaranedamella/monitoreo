@@ -3,27 +3,24 @@ import pandas as pd
 import pytz
 import requests
 import time
+import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 
 # 1. Configuración de página
-st.set_page_config(page_title="SanLeon Monitor", layout="wide", page_icon="📊")
+st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide", page_icon="📊")
 
-# 2. Configuración de constantes
+# 2. Constantes
 CHILE_TZ = pytz.timezone('America/Santiago')
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 REPO_NAME = "rodrigoaranedamella/monitoreo"
 
-# ==========================================================
-# 3. REFRESCO AUTOMÁTICO NATIVO (Cada 2 minutos)
-# ==========================================================
-# Esto reemplaza al script de JavaScript y es mucho más confiable.
+# 3. Refresco automático nativo cada 2 minutos
 st_autorefresh(interval=120 * 1000, key="datarefresh")
 
-# 4. Lógica de obtención de datos en vivo
+# 4. Obtención de datos en vivo
 @st.cache_data(ttl=10, show_spinner=False)
 def obtener_vivo():
     try:
-        # Usar st.secrets para mayor seguridad
         res = requests.get(
             f'https://api.zerotier.com/api/v1/network/{st.secrets["ZT_NETWORK_ID"]}/member',
             headers={'Authorization': f'token {st.secrets["ZT_API_TOKEN"]}'},
@@ -34,7 +31,6 @@ def obtener_vivo():
         for n in ESTACIONES:
             m = next((item for item in res if item.get('name') == n), {})
             ls = m.get('lastSeen', 0)
-            # 15 min de margen para estado ONLINE
             online = ((time.time() * 1000 - ls) / 1000) < 900
             ts = pd.to_datetime(ls, unit='ms', utc=True).tz_convert(CHILE_TZ) if ls > 0 else None
             
@@ -45,32 +41,25 @@ def obtener_vivo():
                 'Inactivo hace': f"{int((time.time()*1000-ls)/60000)} min" if ls > 0 else "---"
             })
         return pd.DataFrame(datos)
-    except Exception as e:
-        st.error(f"Error de conexión: {e}")
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
-# 5. Lógica de historial
+# 5. Carga de historial[cite: 1, 5]
 @st.cache_data(ttl=60)
 def cargar_historial():
     url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/historial_conexiones.json"
     try:
-        response = requests.get(url, timeout=10)
-        if response.status_code == 200:
-            df = pd.DataFrame(response.json())
-            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert(CHILE_TZ)
-            return df
-    except:
-        pass
-    return pd.DataFrame()
+        df = pd.DataFrame(requests.get(url, timeout=10).json())
+        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601').dt.tz_convert(CHILE_TZ)
+        return df
+    except: return pd.DataFrame()
 
-# ==========================================================
+# ==========================================
 # INTERFAZ DE USUARIO
-# ==========================================================
+# ==========================================
 st.title("📊 Centro de Monitoreo SanLeon")
-ahora_str = pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')
-st.caption(f"Última actualización automática: {ahora_str} (Refresco cada 2 min)")
+st.caption(f"Última actualización: {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')} (Auto-refresco 2 min)")
 
-# Mostrar Estado en Vivo
+# TABLA ESTADO EN VIVO
 st.subheader("📡 Estado en Vivo")
 df_vivo = obtener_vivo()
 if not df_vivo.empty:
@@ -78,36 +67,56 @@ if not df_vivo.empty:
 
 st.divider()
 
-# Sidebar y Filtros
+# SIDEBAR
 with st.sidebar:
-    st.header("🔍 Filtros de Historial")
+    st.header("🔍 Configuración")
     est_sel = st.selectbox("Seleccionar Estación", ESTACIONES)
-    fec_sel = st.date_input("Seleccionar Fecha", value=pd.Timestamp.now(tz=CHILE_TZ).date())
-    
+    fec_sel = st.date_input("Fecha", value=pd.Timestamp.now(tz=CHILE_TZ).date())
     if st.button("🔄 Forzar recarga manual"):
         st.cache_data.clear()
         st.rerun()
 
-# Mostrar Historial
-st.subheader(f"📜 Historial: {est_sel}")
+# PROCESAMIENTO DE HISTORIAL
 h_df = cargar_historial()
-
 if not h_df.empty:
-    # Filtrado estricto por usuario y fecha
-    filtro = h_df[
-        (h_df['device'] == est_sel) & 
-        (h_df['timestamp'].dt.date == fec_sel)
-    ].copy()
+    filtro = h_df[(h_df['device'] == est_sel) & (h_df['timestamp'].dt.date == fec_sel)].copy()
     
     if not filtro.empty:
-        filtro = filtro.sort_values('timestamp', ascending=False)
-        # Formatear para visualización
-        display_df = filtro[['timestamp', 'estado', 'duracion_min']].copy()
-        display_df['Hora'] = display_df['timestamp'].dt.strftime('%H:%M:%S')
-        display_df['Estado'] = display_df['estado'].apply(lambda x: "🟢 Conectado" if x else "🔴 Desconectado")
+        # --- NUEVA SECCIÓN: GRÁFICA DE 24 HORAS ---
+        st.subheader(f"📈 Actividad 24h: {est_sel}")
         
-        st.dataframe(display_df[['Hora', 'Estado', 'duracion_min']], use_container_width=True, hide_index=True)
+        # Preparar datos para el gráfico[cite: 1]
+        filtro = filtro.sort_values('timestamp')
+        filtro['Estado_Txt'] = filtro['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
+        
+        fig = px.timeline(
+            filtro, 
+            x_start="timestamp", 
+            x_end="timestamp", # Se visualiza como puntos/barras de actividad
+            y="device", 
+            color="Estado_Txt",
+            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
+            labels={"timestamp": "Hora", "Estado_Txt": "Estado"}
+        )
+        
+        fig.update_layout(
+            xaxis_title="Línea de Tiempo (Horas)",
+            yaxis_title="",
+            showlegend=True,
+            height=200,
+            margin=dict(l=0, r=0, t=30, b=0),
+            xaxis=dict(tickformat="%H:%M")
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        # ------------------------------------------
+
+        st.subheader("📜 Detalle de Registros")
+        display_df = filtro.sort_values('timestamp', ascending=False).copy()
+        display_df['Hora'] = display_df['timestamp'].dt.strftime('%H:%M:%S')
+        display_df['Estado Visual'] = display_df['estado'].apply(lambda x: "🟢 Conectado" if x else "🔴 Desconectado")
+        st.dataframe(display_df[['Hora', 'Estado Visual', 'duracion_min']], use_container_width=True, hide_index=True)
     else:
-        st.info(f"No hay registros para {est_sel} el día {fec_sel}")
+        st.info(f"No hay registros históricos para {est_sel} en la fecha seleccionada.")
 else:
-    st.warning("No se pudo cargar el archivo de historial desde GitHub.")
+    st.warning("Aún no hay datos en el historial de GitHub.")
