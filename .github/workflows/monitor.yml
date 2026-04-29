@@ -2,31 +2,28 @@ name: ZeroTier Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'     # Cada 5 minutos (estándar de GitHub)
-  workflow_dispatch:          # Permite ejecución manual
+    - cron: '*/5 * * * *'     # Intento cada 5 min (sujeto a disponibilidad de GitHub)
+  workflow_dispatch:          # Ejecución manual activa
+
+permissions:                  # Forzamos permisos de escritura desde el código
+  contents: write
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    
     steps:
       - uses: actions/checkout@v4
-      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-      
-      - name: Run ZeroTier Monitor
+          pip install requests pandas PyGithub pytz
+      - name: Run Monitor
         env:
           ZT_API_TOKEN: ${{ secrets.ZT_API_TOKEN }}
           ZT_NETWORK_ID: ${{ secrets.ZT_NETWORK_ID }}
           G_TOKEN: ${{ secrets.G_TOKEN }}
-          # Usamos REPO_NAME para que coincida con os.getenv("REPO_NAME")
           REPO_NAME: "rodrigoaranedamella/monitoreo"
         run: python worker.py
