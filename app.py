@@ -1,46 +1,57 @@
-import os
-import requests
-import time
+import streamlit as st
+import pandas as pd
 from supabase import create_client
+import plotly.express as px
+from streamlit_autorefresh import st_autorefresh
+from datetime import datetime
+import pytz
 
-# Configuración desde GitHub Secrets
-ZT_API_TOKEN = os.getenv("ZT_API_TOKEN")
-ZT_NETWORK_ID = os.getenv("ZT_NETWORK_ID")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+st.set_page_config(page_title="Monitor SanLeon", layout="wide")
+st_autorefresh(interval=60 * 1000, key="datarefresh")
 
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# Conexión a Supabase
+supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+tz = pytz.timezone('America/Santiago')
 
-def run_monitor():
+@st.cache_data(ttl=30) # Cache más corto para ver cambios rápido
+def cargar_datos_db(device, fecha):
     try:
-        res = requests.get(
-            f"https://api.zerotier.com/api/v1/network/{ZT_NETWORK_ID}/member",
-            headers={"Authorization": f"token {ZT_API_TOKEN}"},
-            timeout=15
-        ).json()
-
-        ahora_ms = time.time() * 1000
-        nuevos_registros = []
-
-        for nombre in ESTACIONES:
-            m = next((item for item in res if item.get('name') == nombre), {})
-            last_seen = m.get('lastSeen', 0)
-            is_on = (ahora_ms - last_seen) / 1000 < 900
-
-            nuevos_registros.append({
-                "device": nombre,
-                "estado": is_on,
-                "duracion_min": 5.0
-            })
-
-        # USAMOS EL NOMBRE EXACTO: historial_conexiones
-        supabase.table("historial_conexiones").insert(nuevos_registros).execute()
-        print(f"✅ Datos enviados a Supabase con éxito.")
-
+        # NOMBRE DE TABLA CORREGIDO: historial_conexiones
+        res = supabase.table("historial_conexiones") \
+            .select("*") \
+            .eq("device", device) \
+            .gte("timestamp", f"{fecha}T00:00:00") \
+            .lte("timestamp", f"{fecha}T23:59:59") \
+            .order("timestamp") \
+            .execute()
+        
+        df = pd.DataFrame(res.data)
+        if not df.empty:
+            df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
+        return df
     except Exception as e:
-        print(f"❌ Error: {e}")
+        st.error(f"Error de conexión: {e}")
+        return pd.DataFrame()
 
-if __name__ == "__main__":
-    run_monitor()
+st.title("📊 Monitor de Conexiones SanLeon")
+
+st.sidebar.header("Filtros")
+est_sel = st.sidebar.selectbox("Seleccionar Estación", ESTACIONES)
+fec_sel = st.sidebar.date_input("Fecha", value=datetime.now(tz).date())
+
+df_hist = cargar_datos_db(est_sel, fec_sel)
+
+if not df_hist.empty:
+    df_hist['Estado_Txt'] = df_hist['estado'].apply(lambda x: "Online" if x else "Offline")
+    df_hist['fin'] = df_hist['timestamp'] + pd.Timedelta(minutes=5)
+    
+    fig = px.timeline(df_hist, x_start="timestamp", x_end="fin", y="device", 
+                      color="Estado_Txt", color_discrete_map={"Online": "#00CC96", "Offline": "#EF553B"})
+    
+    minutos_on = df_hist[df_hist['estado'] == True]['duracion_min'].sum()
+    st.metric(f"Tiempo Total Online", f"{int(minutos_on // 60)}h {int(minutos_on % 60)}min")
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Esperando datos de la base de datos...")
