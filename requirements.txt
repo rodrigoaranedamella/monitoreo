@@ -2,6 +2,6 @@ streamlit
 pandas
 plotly
 pytz
-PyGithub
 requests
 streamlit-autorefresh
+supabase
