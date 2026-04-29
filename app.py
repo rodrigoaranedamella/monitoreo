@@ -6,14 +6,14 @@ import time
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 
-# 1. Configuración de página (Layout wide para máximo espacio)
+# 1. Configuración de página y optimización de espacio
 st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide", page_icon="📊")
 
-# CSS inyectado para reducir espacios en blanco superiores (padding)[cite: 4]
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 0rem; }
-        h1 { margin-top: -1rem; }
+        h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 2rem; }
+        .stPlotlyChart { border: 1px solid #444; border-radius: 5px; padding: 5px; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -25,7 +25,6 @@ REPO_NAME = "rodrigoaranedamella/monitoreo"
 # 3. Refresco automático nativo cada 2 minutos
 st_autorefresh(interval=120 * 1000, key="datarefresh")
 
-# 4. Obtención de datos en vivo
 @st.cache_data(ttl=10, show_spinner=False)
 def obtener_vivo():
     try:
@@ -51,7 +50,6 @@ def obtener_vivo():
         return pd.DataFrame(datos)
     except: return pd.DataFrame()
 
-# 5. Carga de historial
 @st.cache_data(ttl=60)
 def cargar_historial():
     url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/historial_conexiones.json"
@@ -66,73 +64,78 @@ def cargar_historial():
 # ==========================================
 st.title("📊 Monitor SanLeon")
 
-# Fila superior: Estado en vivo[cite: 4]
-col_v1, col_v2 = st.columns([4, 1])
+# Fila superior compacta[cite: 4]
+col_v1, col_v2 = st.columns([4, 1.2])
 with col_v1:
     df_vivo = obtener_vivo()
     if not df_vivo.empty:
-        st.dataframe(df_vivo, use_container_width=True, hide_index=True, height=250)
+        st.dataframe(df_vivo, use_container_width=True, hide_index=True, height=220)
 
 with col_v2:
-    st.write(f"⏱️ **Actualización:**")
-    st.code(pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S'))
+    st.info(f"🕒 **Actualización:** {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')}")
     est_sel = st.selectbox("Estación", ESTACIONES)
     fec_sel = st.date_input("Fecha", value=pd.Timestamp.now(tz=CHILE_TZ).date())
-    if st.button("🔄 Refrescar Manual"):
+    if st.button("🔄 Refrescar Manual", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
 st.divider()
 
-# Procesamiento de Historial y Gráfico
+# Historial y Gráfica
 h_df = cargar_historial()
 if not h_df.empty:
     filtro = h_df[(h_df['device'] == est_sel) & (h_df['timestamp'].dt.date == fec_sel)].copy()
     
     if not filtro.empty:
-        # --- GRÁFICA DE 24 HORAS ---
         st.subheader(f"📈 Actividad 24h: {est_sel}")
         filtro = filtro.sort_values('timestamp')
         filtro['Estado_Txt'] = filtro['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
         
-        # Crear duración ficticia para que Plotly dibuje bloques de tiempo (5 min cada uno)[cite: 1]
+        # Intervalo de 5 minutos para los bloques[cite: 1]
         filtro['fin'] = filtro['timestamp'] + pd.Timedelta(minutes=5)
         
+        # Definir el rango estricto de 00:00 a 23:59 del día seleccionado
+        start_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.min.time()).replace(tzinfo=CHILE_TZ)
+        end_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.max.time()).replace(tzinfo=CHILE_TZ)
+
         fig = px.timeline(
             filtro, 
             x_start="timestamp", 
             x_end="fin", 
             y="device", 
             color="Estado_Txt",
-            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
-            labels={"timestamp": "Hora", "Estado_Txt": "Estado"}
+            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"}
         )
         
-        # Ajustar ejes para que marquen de 00:00 a 23:59 con ticks cada 2 horas[cite: 5]
-        start_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.min.time()).replace(tzinfo=CHILE_TZ)
-        end_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.max.time()).replace(tzinfo=CHILE_TZ)
-
         fig.update_layout(
             xaxis=dict(
-                title="Línea de Tiempo (marcas cada 2h)",
+                title="Horario (pasos de 2h)",
                 range=[start_day, end_day],
                 dtick=7200000, # 2 horas en milisegundos
-                tickformat="%H:%M"
+                tickformat="%H:%M",
+                gridcolor="#333",
+                showgrid=True
             ),
-            yaxis=dict(visible=False), # Ocultamos el eje Y porque ya sabemos qué estación es
+            yaxis=dict(visible=False),
             showlegend=True,
             height=180,
-            margin=dict(l=10, r=10, t=10, b=10)
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
+        
+        # Recuadro demarcador con línea fina[cite: 5]
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         
         st.plotly_chart(fig, use_container_width=True)
 
-        # Historial abajo en 2 columnas para ahorrar espacio[cite: 4]
-        st.subheader("📜 Historial de Registros")
+        st.subheader("📜 Detalle de Registros")
         display_df = filtro.sort_values('timestamp', ascending=False).copy()
         display_df['Hora'] = display_df['timestamp'].dt.strftime('%H:%M:%S')
         display_df['Visual'] = display_df['estado'].apply(lambda x: "🟢 Conectado" if x else "🔴 Desconectado")
-        st.dataframe(display_df[['Hora', 'Visual', 'duracion_min']], use_container_width=True, hide_index=True, height=300)
+        st.dataframe(display_df[['Hora', 'Visual', 'duracion_min']], use_container_width=True, hide_index=True, height=250)
     else:
         st.info(f"Sin registros para {est_sel} el {fec_sel}.")
 else:
