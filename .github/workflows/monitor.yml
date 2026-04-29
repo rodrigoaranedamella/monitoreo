@@ -2,25 +2,33 @@ name: ZeroTier Monitor
 
 on:
   schedule:
-    - cron: '*/5 * * * *'     # Intento cada 5 min (sujeto a disponibilidad de GitHub)
-  workflow_dispatch:          # Ejecución manual activa
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
 
-permissions:                  # Forzamos permisos de escritura desde el código
+permissions:
   contents: write
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    # Forzamos el uso de Node 24 para eliminar la advertencia de la imagen
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Repository
+        uses: actions/checkout@v5 # Actualizado de v4 para soporte Node 24
+      
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6 # Actualizado de v5 para soporte Node 24
         with:
           python-version: '3.11'
+      
       - name: Install dependencies
         run: |
           pip install requests pandas PyGithub pytz
-      - name: Run Monitor
+      
+      - name: Run Monitor Robust
         env:
           ZT_API_TOKEN: ${{ secrets.ZT_API_TOKEN }}
           ZT_NETWORK_ID: ${{ secrets.ZT_NETWORK_ID }}
