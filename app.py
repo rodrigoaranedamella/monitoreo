@@ -9,13 +9,10 @@ from streamlit_autorefresh import st_autorefresh
 # 1. Configuración de página y optimización de espacio
 st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide", page_icon="📊")
 
-# CSS para expandir tablas y eliminar espacios muertos
 st.markdown("""
     <style>
         .block-container { padding-top: 1rem; padding-bottom: 0rem; }
         h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 2rem; }
-        /* Hace que las filas de la tabla sean más altas y legibles */
-        [data-testid="stDataFrame"] { border: 1px solid #444; border-radius: 5px; }
         .stPlotlyChart { border: 1px solid #444; border-radius: 5px; padding: 5px; }
     </style>
 """, unsafe_allow_html=True)
@@ -67,13 +64,12 @@ def cargar_historial():
 # ==========================================
 st.title("📊 Monitor SanLeon")
 
-# Fila superior compacta
+# Fila superior compacta[cite: 4]
 col_v1, col_v2 = st.columns([4, 1.2])
 with col_v1:
     df_vivo = obtener_vivo()
     if not df_vivo.empty:
-        # Aumentamos height a 300 para asegurar que Jennifer2 (6ta fila) sea visible
-        st.dataframe(df_vivo, use_container_width=True, hide_index=True, height=300)
+        st.dataframe(df_vivo, use_container_width=True, hide_index=True, height=220)
 
 with col_v2:
     st.info(f"🕒 **Actualización:** {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')}")
@@ -85,7 +81,7 @@ with col_v2:
 
 st.divider()
 
-# Historial y Gráfica[cite: 5]
+# Historial y Gráfica
 h_df = cargar_historial()
 if not h_df.empty:
     filtro = h_df[(h_df['device'] == est_sel) & (h_df['timestamp'].dt.date == fec_sel)].copy()
@@ -98,7 +94,7 @@ if not h_df.empty:
         # Intervalo de 5 minutos para los bloques[cite: 1]
         filtro['fin'] = filtro['timestamp'] + pd.Timedelta(minutes=5)
         
-        # Rango estricto de 00:00 a 23:59[cite: 5]
+        # Definir el rango estricto de 00:00 a 23:59 del día seleccionado
         start_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.min.time()).replace(tzinfo=CHILE_TZ)
         end_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.max.time()).replace(tzinfo=CHILE_TZ)
 
@@ -115,20 +111,21 @@ if not h_df.empty:
             xaxis=dict(
                 title="Horario (pasos de 2h)",
                 range=[start_day, end_day],
-                dtick=7200000, # 2 horas[cite: 5]
+                dtick=7200000, # 2 horas en milisegundos
                 tickformat="%H:%M",
                 gridcolor="#333",
                 showgrid=True
             ),
             yaxis=dict(visible=False),
             showlegend=True,
-            height=200,
+            height=180,
             margin=dict(l=10, r=10, t=10, b=10),
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
         )
         
+        # Recuadro demarcador con línea fina[cite: 5]
         fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         
@@ -138,8 +135,7 @@ if not h_df.empty:
         display_df = filtro.sort_values('timestamp', ascending=False).copy()
         display_df['Hora'] = display_df['timestamp'].dt.strftime('%H:%M:%S')
         display_df['Visual'] = display_df['estado'].apply(lambda x: "🟢 Conectado" if x else "🔴 Desconectado")
-        # Tabla de historial también con más altura para evitar scroll excesivo
-        st.dataframe(display_df[['Hora', 'Visual', 'duracion_min']], use_container_width=True, hide_index=True, height=400)
+        st.dataframe(display_df[['Hora', 'Visual', 'duracion_min']], use_container_width=True, hide_index=True, height=250)
     else:
         st.info(f"Sin registros para {est_sel} el {fec_sel}.")
 else:
