@@ -6,18 +6,21 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime
 import pytz
 
-# Configuración y Autorefresh (Source 3)
-st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide")
+# Configuración inicial
+st.set_page_config(page_title="SanLeon Monitor", layout="wide")
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# Conexión a DB usando Secrets de Streamlit
+# Lista de estaciones (Corregido el NameError)
+ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
+
+# Conexión a Supabase
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 
 @st.cache_data(ttl=60)
-def cargar_historial_db(device, fecha):
-    # Consulta a Supabase filtrada por dispositivo y día
-    res = supabase.table("historial_conexiones") \
+def cargar_datos_db(device, fecha):
+    # Trae los registros del día seleccionado desde la DB
+    res = supabase.table("historial_connections") \
         .select("*") \
         .eq("device", device) \
         .gte("timestamp", f"{fecha}T00:00:00") \
@@ -30,32 +33,25 @@ def cargar_historial_db(device, fecha):
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
     return df
 
+# --- INTERFAZ ---
 st.title("📊 Monitor de Conexiones SanLeon")
 
-# Sidebar para filtros
-st.sidebar.header("Filtros de Historial")
-est_sel = st.sidebar.selectbox("Estación", ESTACIONES_LISTA_COMPLETA) # Usa tu lista de nombres
+st.sidebar.header("Filtros")
+est_sel = st.sidebar.selectbox("Seleccionar Estación", ESTACIONES)
 fec_sel = st.sidebar.date_input("Fecha", value=datetime.now(tz).date())
 
-# Lógica de visualización
-h_df = cargar_historial_db(est_sel, fec_sel)
+df_hist = cargar_datos_db(est_sel, fec_sel)
 
-if not h_df.empty:
-    h_df['Estado_Txt'] = h_df['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
-    # Creamos el bloque de 5 minutos para la línea de tiempo
-    h_df['fin'] = h_df['timestamp'] + pd.Timedelta(minutes=5)
+if not df_hist.empty:
+    df_hist['Estado_Txt'] = df_hist['estado'].apply(lambda x: "Online" if x else "Offline")
+    df_hist['fin'] = df_hist['timestamp'] + pd.Timedelta(minutes=5)
     
-    fig = px.timeline(h_df, 
-                      x_start="timestamp", 
-                      x_end="fin", 
-                      y="device", 
-                      color="Estado_Txt",
-                      color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
-                      title=f"Línea de Tiempo: {est_sel}")
+    fig = px.timeline(df_hist, x_start="timestamp", x_end="fin", y="device", 
+                      color="Estado_Txt", color_discrete_map={"Online": "#00CC96", "Offline": "#EF553B"})
     
-    # Cálculo de horas totales conectadas
-    min_conectado = h_df[h_df['estado'] == True]['duracion_min'].sum()
-    st.metric("Tiempo Total Online", f"{int(min_conectado // 60)}h {int(min_conectado % 60)}min")
+    # Cálculo de métricas
+    minutos_on = df_hist[df_hist['estado'] == True]['duracion_min'].sum()
+    st.metric(f"Tiempo Total Online ({est_sel})", f"{int(minutos_on // 60)}h {int(minutos_on % 60)}min")
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("No se encontraron registros para la fecha seleccionada.")
+    st.info(f"No hay datos registrados para {est_sel} el día {fec_sel}.")
