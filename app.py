@@ -1,96 +1,146 @@
 import streamlit as st
 import pandas as pd
-import plotly.express as px
-import json
-import base64
-from github import Github
-import os
 import pytz
+import requests
+import time
+import plotly.express as px
+from streamlit_autorefresh import st_autorefresh
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Monitor San León", layout="wide")
+# 1. Configuración de página y optimización de espacio
+st.set_page_config(page_title="SanLeon Monitor Pro", layout="wide", page_icon="📊")
 
-# --- PARÁMETROS Y TOKENS ---
-G_TOKEN = os.getenv("G_TOKEN")
-GITHUB_REPO = "rodrigoaranedamella/monitoreo"
-HISTORIAL_FILE = 'historial_conexiones.json'
+# CSS para expandir tablas y eliminar espacios muertos
+st.markdown("""
+    <style>
+        .block-container { padding-top: 1rem; padding-bottom: 0rem; }
+        h1 { margin-top: -1rem; margin-bottom: 0.5rem; font-size: 2rem; }
+        /* Hace que las filas de la tabla sean más altas y legibles */
+        [data-testid="stDataFrame"] { border: 1px solid #444; border-radius: 5px; }
+        .stPlotlyChart { border: 1px solid #444; border-radius: 5px; padding: 5px; }
+    </style>
+""", unsafe_allow_html=True)
+
+# 2. Constantes
 CHILE_TZ = pytz.timezone('America/Santiago')
+ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
+REPO_NAME = "rodrigoaranedamella/monitoreo"
 
-# --- FUNCIONES DE CARGA ---
-def cargar_historial():
+# 3. Refresco automático nativo cada 2 minutos
+st_autorefresh(interval=120 * 1000, key="datarefresh")
+
+@st.cache_data(ttl=10, show_spinner=False)
+def obtener_vivo():
     try:
-        g = Github(G_TOKEN)
-        repo = g.get_repo(GITHUB_REPO)
-        contents = repo.get_contents(HISTORIAL_FILE)
-        decoded = base64.b64decode(contents.content).decode('utf-8')
-        data = json.loads(decoded)
-        return pd.DataFrame(data)
-    except Exception as e:
-        st.error(f"Error al conectar con GitHub: {e}")
-        return pd.DataFrame()
+        res = requests.get(
+            f'https://api.zerotier.com/api/v1/network/{st.secrets["ZT_NETWORK_ID"]}/member',
+            headers={'Authorization': f'token {st.secrets["ZT_API_TOKEN"]}'},
+            timeout=10
+        ).json()
+        
+        datos = []
+        for n in ESTACIONES:
+            m = next((item for item in res if item.get('name') == n), {})
+            ls = m.get('lastSeen', 0)
+            online = ((time.time() * 1000 - ls) / 1000) < 900
+            ts = pd.to_datetime(ls, unit='ms', utc=True).tz_convert(CHILE_TZ) if ls > 0 else None
+            
+            datos.append({
+                'Estación': n,
+                'Estado': "🟢 ONLINE" if online else "🔴 OFFLINE",
+                'Última conexión': ts.strftime('%H:%M:%S') if ts else "N/A",
+                'Inactivo hace': f"{int((time.time()*1000-ls)/60000)} min" if ls > 0 else "---"
+            })
+        return pd.DataFrame(datos)
+    except: return pd.DataFrame()
 
-# --- INTERFAZ ---
-st.title("📊 Panel de Monitoreo - San León")
+@st.cache_data(ttl=60)
+def cargar_historial():
+    url = f"https://raw.githubusercontent.com/{REPO_NAME}/main/historial_conexiones.json"
+    try:
+        df = pd.DataFrame(requests.get(url, timeout=10).json())
+        df['timestamp'] = pd.to_datetime(df['timestamp'], format='ISO8601').dt.tz_convert(CHILE_TZ)
+        return df
+    except: return pd.DataFrame()
 
-h_df = cargar_historial()
+# ==========================================
+# INTERFAZ DE USUARIO
+# ==========================================
+st.title("📊 Monitor SanLeon")
 
-# Sidebar para filtros
-with st.sidebar:
-    st.header("Filtros")
-    # Fecha de hoy en Chile para el calendario
-    hoy_chile = pd.Timestamp.now(tz=CHILE_TZ).date()
-    fec_sel = st.date_input("Seleccionar Fecha", hoy_chile)
-    
-    estaciones = ["Jennifer_SANLEON", "Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON"]
-    est_sel = st.selectbox("Seleccionar Estación", estaciones)
-    
-    if st.button("🔄 Refrescar Datos"):
+# Fila superior compacta
+col_v1, col_v2 = st.columns([4, 1.2])
+with col_v1:
+    df_vivo = obtener_vivo()
+    if not df_vivo.empty:
+        # Aumentamos height a 300 para asegurar que Jennifer2 (6ta fila) sea visible
+        st.dataframe(df_vivo, use_container_width=True, hide_index=True, height=300)
+
+with col_v2:
+    st.info(f"🕒 **Actualización:** {pd.Timestamp.now(tz=CHILE_TZ).strftime('%H:%M:%S')}")
+    est_sel = st.selectbox("Estación", ESTACIONES)
+    fec_sel = st.date_input("Fecha", value=pd.Timestamp.now(tz=CHILE_TZ).date())
+    if st.button("🔄 Refrescar Manual", use_container_width=True):
+        st.cache_data.clear()
         st.rerun()
 
-# --- PROCESAMIENTO DE DATOS ---
+st.divider()
+
+# Historial y Gráfica[cite: 5]
+h_df = cargar_historial()
 if not h_df.empty:
-    # 1. Convertir timestamps a datetime (vienen en UTC 'Z' del worker)
-    h_df['timestamp'] = pd.to_datetime(h_df['timestamp'], format='ISO8601')
+    filtro = h_df[(h_df['device'] == est_sel) & (h_df['timestamp'].dt.date == fec_sel)].copy()
     
-    # 2. Convertir de UTC a Hora de Chile (UTC-4)
-    # Si los datos no tienen zona horaria, se la asignamos (UTC) y luego convertimos
-    if h_df['timestamp'].dt.tz is None:
-        h_df['timestamp'] = h_df['timestamp'].dt.tz_localize('UTC').dt.tz_convert(CHILE_TZ)
-    else:
-        h_df['timestamp'] = h_df['timestamp'].dt.tz_convert(CHILE_TZ)
-
-    # 3. Filtrar por fecha (comparando solo el día) y estación
-    mask = (h_df['timestamp'].dt.date == fec_sel) & (h_df['device'] == est_sel)
-    filtro = h_df.loc[mask].copy()
-
-    # --- VISUALIZACIÓN ---
     if not filtro.empty:
-        st.subheader(f"Actividad de {est_sel} el {fec_sel}")
+        st.subheader(f"📈 Actividad 24h: {est_sel}")
+        filtro = filtro.sort_values('timestamp')
+        filtro['Estado_Txt'] = filtro['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
         
-        # Crear gráfico de línea de tiempo
-        fig = px.scatter(
+        # Intervalo de 5 minutos para los bloques[cite: 1]
+        filtro['fin'] = filtro['timestamp'] + pd.Timedelta(minutes=5)
+        
+        # Rango estricto de 00:00 a 23:59[cite: 5]
+        start_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.min.time()).replace(tzinfo=CHILE_TZ)
+        end_day = pd.Timestamp.combine(fec_sel, pd.Timestamp.max.time()).replace(tzinfo=CHILE_TZ)
+
+        fig = px.timeline(
             filtro, 
-            x='timestamp', 
-            y='estado',
-            color='estado',
-            color_discrete_map={True: '#00CC96', False: '#EF553B'},
-            labels={'estado': '¿En Línea?', 'timestamp': 'Hora'},
-            title=f"Conexiones detectadas (Hora Chile)"
+            x_start="timestamp", 
+            x_end="fin", 
+            y="device", 
+            color="Estado_Txt",
+            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"}
         )
         
-        fig.update_traces(marker=dict(size=12, symbol='square'))
-        fig.update_layout(yaxis=dict(tickmode='array', tickvals=[0, 1], ticktext=['Offline', 'Online']))
+        fig.update_layout(
+            xaxis=dict(
+                title="Horario (pasos de 2h)",
+                range=[start_day, end_day],
+                dtick=7200000, # 2 horas[cite: 5]
+                tickformat="%H:%M",
+                gridcolor="#333",
+                showgrid=True
+            ),
+            yaxis=dict(visible=False),
+            showlegend=True,
+            height=200,
+            margin=dict(l=10, r=10, t=10, b=10),
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+        
+        fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
+        fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
         
         st.plotly_chart(fig, use_container_width=True)
-        
-        # Mostrar tabla de los últimos registros
-        st.write("Últimos registros detectados:")
-        st.dataframe(filtro.sort_values('timestamp', ascending=False))
-    else:
-        st.warning(f"No se encontraron registros para {est_sel} en la fecha {fec_sel}.")
-        st.info("💡 Nota: Los datos de la madrugada (post 00:00) aparecen al seleccionar la fecha de hoy.")
 
-# --- SECCIÓN DE DEPURACIÓN (Opcional, borrar después) ---
-with st.expander("Ver RAW Data (Depuración)"):
-    st.write("Últimas 5 líneas del archivo original en GitHub:")
-    st.write(h_df.tail(5))
+        st.subheader("📜 Detalle de Registros")
+        display_df = filtro.sort_values('timestamp', ascending=False).copy()
+        display_df['Hora'] = display_df['timestamp'].dt.strftime('%H:%M:%S')
+        display_df['Visual'] = display_df['estado'].apply(lambda x: "🟢 Conectado" if x else "🔴 Desconectado")
+        # Tabla de historial también con más altura para evitar scroll excesivo
+        st.dataframe(display_df[['Hora', 'Visual', 'duracion_min']], use_container_width=True, hide_index=True, height=400)
+    else:
+        st.info(f"Sin registros para {est_sel} el {fec_sel}.")
+else:
+    st.warning("No hay datos históricos disponibles.")
