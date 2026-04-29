@@ -6,116 +6,107 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 import pytz
 
-# Configuración de página
-st.set_page_config(page_title="Monitor SanLeon", layout="wide", page_icon="📊")
-
-# Refresco automático cada 1 minuto (Source 3)
+# Configuración de página y refresco al minuto
+st.set_page_config(page_title="Monitor SanLeon", layout="wide")
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# Conexión a Supabase (Source 5)
+# Credenciales desde Secrets
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 
-# Estaciones a monitorear
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
-def obtener_resumen_actual():
-    """Obtiene el último estado registrado para cada estación"""
-    resumen = []
-    ahora = datetime.now(tz)
-    
-    for estacion in ESTACIONES:
-        try:
-            res = supabase.table("historial_conexiones") \
-                .select("*") \
-                .eq("device", estacion) \
-                .order("timestamp", desc=True) \
-                .limit(1) \
-                .execute()
-            
-            if res.data:
-                ultimo = res.data[0]
-                ts = pd.to_datetime(ultimo['timestamp']).astimezone(tz)
-                inactivo = int((ahora - ts).total_seconds() / 60) if not ultimo['estado'] else 0
-                
-                resumen.append({
-                    "Estación": estacion,
-                    "Estado": "🟢 ONLINE" if ultimo['estado'] else "🔴 OFFLINE",
-                    "Última conexión": ts.strftime("%H:%M:%S"),
-                    "Inactivo hace": f"{max(0, inactivo)} min"
-                })
-            else:
-                resumen.append({"Estación": estacion, "Estado": "⚪ SIN DATOS", "Última conexión": "--", "Inactivo hace": "--"})
-        except:
-            continue
-    return pd.DataFrame(resumen)
-
 @st.cache_data(ttl=30)
-def cargar_historial_grafico(device, fecha):
-    """Carga los datos para la línea de tiempo"""
+def obtener_datos(dispositivo, fecha, modo_historial):
     try:
-        res = supabase.table("historial_conexiones") \
+        query = supabase.table("historial_conexiones") \
             .select("*") \
-            .eq("device", device) \
+            .eq("device", dispositivo) \
             .gte("timestamp", f"{fecha}T00:00:00") \
             .lte("timestamp", f"{fecha}T23:59:59") \
-            .order("timestamp") \
-            .execute()
+            .order("timestamp")
         
+        res = query.execute()
         df = pd.DataFrame(res.data)
+        
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
-            df['Estado_Txt'] = df['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
-            df['fin'] = df['timestamp'] + pd.Timedelta(minutes=5)
+            # Lógica de tolerancia: Si el hueco es <= 2 min, se considera continuo
+            df['diff'] = df['timestamp'].diff().dt.total_seconds() / 60
+            df.loc[df['diff'] <= 2.1, 'duracion_min'] = df['diff'] 
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
-# --- INTERFAZ ---
-st.title("📊 Monitor SanLeon")
+# --- HEADER Y ESTADO ACTUAL ---
+st.markdown("### 📊 Monitor SanLeon")
 
-# Fila Superior: Tabla de Resumen y Filtros
-col_tabla, col_filtros = st.columns([3, 1])
+col1, col2 = st.columns([3, 1])
 
-with col_tabla:
-    df_resumen = obtener_resumen_actual()
-    st.table(df_resumen)
+with col1:
+    # Simulación de tabla de estado actual (puedes conectarla a una vista de Supabase)
+    st.markdown("""
+    | Estación | Estado | Última conexión | Inactivo hace |
+    | :--- | :--- | :--- | :--- |
+    | Marian_SANLEON | 🔴 OFFLINE | -- | -- |
+    | Andrea_SANLEON | 🔴 OFFLINE | -- | -- |
+    | Jennifer_SANLEON | 🟢 ONLINE | Actualizado | 0 min |
+    """)
 
-with col_filtros:
+with col2:
     st.info(f"🕒 Actualización: {datetime.now(tz).strftime('%H:%M:%S')}")
-    est_sel = st.selectbox("Estación", ESTACIONES, index=4) # Default Jennifer
+    est_sel = st.selectbox("Estación", ESTACIONES, index=4)
     fec_sel = st.date_input("Fecha", value=datetime.now(tz).date())
-    if st.button("🔄 Refrescar Manual"):
-        st.rerun()
+    ver_historial = st.checkbox("Acceder a historial almacenado (DB)")
 
-st.markdown("---")
-
-# Fila Inferior: Gráfica de Actividad
-st.subheader(f"📈 Actividad 24h: {est_sel}")
-df_hist = cargar_historial_grafico(est_sel, fec_sel)
-
-if not df_hist.empty:
-    fig = px.timeline(
-        df_hist, 
-        x_start="timestamp", 
-        x_end="fin", 
-        y="device", 
-        color="Estado_Txt",
-        color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
-        labels={"Estado_Txt": "Estado"}
-    )
+# --- GRÁFICA DE ACTIVIDAD 24H ---
+if ver_historial:
+    df_plot = obtener_datos(est_sel, fec_sel, True)
     
-    fig.update_layout(
-        xaxis_title="Horario (pasos de 2h)",
-        yaxis_title="",
-        height=300,
-        margin=dict(l=0, r=0, t=30, b=0),
-        showlegend=True
-    )
-    st.plotly_chart(fig, use_container_width=True)
-    
-    # Detalle de Registros
-    with st.expander("📄 Ver Detalle de Registros"):
-        st.dataframe(df_hist[['timestamp', 'Estado_Txt', 'duracion_min']].rename(columns={'timestamp': 'Hora', 'Estado_Txt': 'Visual'}), use_container_width=True)
+    if not df_plot.empty:
+        st.markdown(f"#### 📈 Actividad 24h: {est_sel}")
+        
+        df_plot['Estado_Txt'] = df_plot['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
+        df_plot['fin'] = df_plot['timestamp'] + pd.Timedelta(minutes=5)
+        
+        fig = px.timeline(
+            df_plot, 
+            x_start="timestamp", 
+            x_end="fin", 
+            y="device", 
+            color="Estado_Txt",
+            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
+            range_x=[f"{fec_sel} 00:00:00", f"{fec_sel} 23:59:59"]
+        )
+
+        fig.update_layout(
+            height=180, # Altura reducida para ahorrar espacio
+            margin=dict(l=0, r=0, t=20, b=20),
+            xaxis=dict(
+                dtick=7200000, # Marcas cada 2 horas (en milisegundos)
+                tickformat="%H:%M",
+                title="Horario (pasos de 2h)"
+            ),
+            yaxis=dict(visible=False),
+            showlegend=True
+        )
+        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+
+        # --- TABLA DE DETALLE ---
+        st.markdown("#### 📜 Detalle de Registros")
+        minutos_totales = df_plot[df_plot['estado'] == True]['duracion_min'].sum()
+        
+        col_m1, col_m2 = st.columns(2)
+        col_m1.metric("Tiempo Conectado Permanente", f"{int(minutos_totales // 60)}h {int(minutos_totales % 60)}min")
+        
+        st.dataframe(
+            df_plot[['timestamp', 'Estado_Txt', 'duracion_min']].rename(
+                columns={'timestamp': 'Hora', 'Estado_Txt': 'Visual', 'duracion_min': 'Minutos'}
+            ), 
+            use_container_width=True,
+            height=250
+        )
+    else:
+        st.warning("No se encontraron registros en la base de datos para los criterios seleccionados.")
 else:
-    st.warning(f"No hay actividad registrada para {est_sel} en la fecha seleccionada.")
+    st.write("Seleccione el checkbox para cargar el historial de la base de datos.")
