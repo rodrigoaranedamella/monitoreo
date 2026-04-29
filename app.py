@@ -3,24 +3,62 @@ import pandas as pd
 from supabase import create_client
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
-from datetime import datetime, timedelta
+from datetime import datetime
 import pytz
 
-# 1. Configuración de pantalla y autorefresco al minuto (Source 3)
+# 1. Configuración de pantalla y autorefresco al minuto
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>div.block-container{padding-top:1rem;}</style>", unsafe_allow_html=True) # Reduce espacio superior
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# Conexión a Supabase (Source 5)
+# Conexión a Supabase
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 
+# Listado de todas las estaciones para el selector y la tabla
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
+
+@st.cache_data(ttl=30)
+def obtener_estado_actual():
+    # Definimos las 5 estaciones principales para la tabla superior
+    estaciones_top = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON"]
+    resumen = []
+    ahora = datetime.now(tz)
+    
+    for est in estaciones_top:
+        try:
+            # Traer último registro de cada una para la tabla superior
+            res = supabase.table("historial_conexiones") \
+                .select("*") \
+                .eq("device", est) \
+                .order("timestamp", desc=True) \
+                .limit(1) \
+                .execute()
+            
+            if res.data:
+                ultimo = res.data[0]
+                ts = pd.to_datetime(ultimo['timestamp']).tz_convert('America/Santiago')
+                dif_min = int((ahora - ts).total_seconds() / 60)
+                
+                # Estado basado en reporte reciente (15 min de tolerancia)
+                estado = "🟢 ONLINE" if ultimo['estado'] and dif_min < 15 else "🔴 OFFLINE"
+                resumen.append({
+                    "Estación": est,
+                    "Estado": estado,
+                    "Última conexión": ts.strftime('%H:%M:%S'),
+                    "Inactivo hace": f"{dif_min} min"
+                })
+            else:
+                resumen.append({"Estación": est, "Estado": "🔴 OFFLINE", "Última conexión": "--", "Inactivo hace": "--"})
+        except:
+            resumen.append({"Estación": est, "Estado": "Error DB", "Última conexión": "--", "Inactivo hace": "--"})
+    
+    return pd.DataFrame(resumen)
 
 @st.cache_data(ttl=30)
 def cargar_datos_totales(device, fecha):
     try:
-        # Consulta automática a la base de datos (Source 5)
+        # Consulta automática a la base de datos para la gráfica
         res = supabase.table("historial_conexiones") \
             .select("*") \
             .eq("device", device) \
@@ -32,7 +70,7 @@ def cargar_datos_totales(device, fecha):
         df = pd.DataFrame(res.data)
         if not df.empty:
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
-            # Lógica de persistencia de 2 minutos (Source 5)
+            # Lógica de persistencia de 2 minutos
             df['diff'] = df['timestamp'].diff().dt.total_seconds() / 60
             df['duracion_real'] = df['duracion_min']
             df.loc[df['diff'] <= 2.1, 'duracion_real'] = df['diff']
@@ -40,28 +78,29 @@ def cargar_datos_totales(device, fecha):
     except:
         return pd.DataFrame()
 
-# --- PARTE SUPERIOR (Compacta) ---
+# --- PARTE SUPERIOR (Tabla de 5 filas y Controles) ---
 st.markdown("### 📊 Monitor SanLeon")
 
 col_tabla, col_ctrl = st.columns([3, 1])
 
 with col_tabla:
-    # Aquí puedes integrar una consulta a Supabase para que esta tabla sea real (Source 3, 5)
-    st.markdown("""
-    | Estación | Estado | Última conexión | Inactivo hace |
-    | :--- | :--- | :--- | :--- |
-    | Marian_SANLEON | 🔴 OFFLINE | -- | -- |
-    | Andrea_SANLEON | 🔴 OFFLINE | -- | -- |
-    | Matias_SANLEON | 🔴 OFFLINE | -- | -- |
-    | **Jennifer_SANLEON** | 🟢 **ONLINE** | **Actualizado** | **0 min** |
-    """, unsafe_allow_html=True)
+    df_estado = obtener_estado_actual()
+    # Tabla compacta para 5 estaciones
+    st.dataframe(
+        df_estado, 
+        hide_index=True, 
+        use_container_width=True,
+        height=212 # Altura ajustada para 5 filas exactas
+    )
 
 with col_ctrl:
     st.caption(f"🕒 Actualización: {datetime.now(tz).strftime('%H:%M:%S')}")
-    est_sel = st.selectbox("Estación", ESTACIONES, index=4)
+    est_sel = st.selectbox("Estación detalle", ESTACIONES, index=4)
     fec_sel = st.date_input("Fecha", value=datetime.now(tz).date())
+    if st.button("🔄 Refrescar Manual", use_container_width=True):
+        st.cache_data.clear()
 
-# --- GRÁFICA ACTIVIDAD 24H (Estilo Original) ---
+# --- GRÁFICA ACTIVIDAD 24H (Estilo Recuadro) ---
 df_hist = cargar_datos_totales(est_sel, fec_sel)
 
 st.markdown(f"#### 📈 Actividad 24h: {est_sel}")
@@ -70,7 +109,6 @@ if not df_hist.empty:
     df_hist['Estado_Txt'] = df_hist['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
     df_hist['fin'] = df_hist['timestamp'] + pd.Timedelta(minutes=5)
     
-    # Recreación de la gráfica de la foto (Source 3)
     fig = px.timeline(
         df_hist, 
         x_start="timestamp", 
@@ -78,26 +116,26 @@ if not df_hist.empty:
         y="device", 
         color="Estado_Txt",
         color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
-        range_x=[f"{fec_sel} 00:00:00", f"{fec_sel} 23:59:59"] # Escala completa 00:00 a 23:59
+        range_x=[f"{fec_sel} 00:00:00", f"{fec_sel} 23:59:59"] 
     )
 
     fig.update_layout(
         height=220,
         showlegend=True,
         legend_title_text="",
-        plot_bgcolor="rgba(0,0,0,0)", # Fondo transparente para ver el recuadro
+        plot_bgcolor="rgba(0,0,0,0)", 
         paper_bgcolor="rgba(0,0,0,0)",
         margin=dict(l=0, r=20, t=10, b=10),
         xaxis=dict(
             dtick=7200000, # Marcas cada 2 horas
             tickformat="%H:%M",
-            gridcolor="#333", # Recrea las líneas de guía de la foto
+            gridcolor="#333", 
             title="Horario (pasos de 2h)"
         ),
         yaxis=dict(visible=False)
     )
     
-    # Dibujar el recuadro de la gráfica (Source 3)
+    # Recuadro gris perimetral
     fig.update_xaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
     fig.update_yaxes(showline=True, linewidth=1, linecolor='gray', mirror=True)
 
