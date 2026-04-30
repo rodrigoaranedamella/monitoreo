@@ -1,68 +1,46 @@
 import os
 import requests
 import time
-from datetime import datetime
-import pytz
 from supabase import create_client
 
-# 1. Configuración de variables de entorno (GitHub Secrets)
+# Configuración desde GitHub Secrets
 ZT_API_TOKEN = os.getenv("ZT_API_TOKEN")
 ZT_NETWORK_ID = os.getenv("ZT_NETWORK_ID")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-# 2. Configuración de Zona Horaria (Santiago de Chile)
-tz = pytz.timezone('America/Santiago')
+ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
-ESTACIONES = [
-    "Marian_SANLEON", 
-    "Andrea_SANLEON", 
-    "Carmily_SANLEON", 
-    "Matias_SANLEON", 
-    "Jennifer_SANLEON", 
-    "Jennifer2_SANLEON"
-]
-
-# 3. Inicializar cliente de Supabase
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def run_monitor():
     try:
-        # Consultar API de ZeroTier
         res = requests.get(
             f"https://api.zerotier.com/api/v1/network/{ZT_NETWORK_ID}/member",
             headers={"Authorization": f"token {ZT_API_TOKEN}"},
             timeout=15
         ).json()
 
-        # Generar timestamp con zona horaria de Chile
-        # Esto evita el desfase de las 20:00/22:00
-        timestamp_ahora = datetime.now(tz).isoformat()
-        
         ahora_ms = time.time() * 1000
         nuevos_registros = []
 
         for nombre in ESTACIONES:
-            # Buscar el dispositivo en la respuesta de la API
             m = next((item for item in res if item.get('name') == nombre), {})
             last_seen = m.get('lastSeen', 0)
-            
-            # Si se vio hace menos de 15 min, está ONLINE
             is_on = (ahora_ms - last_seen) / 1000 < 900
 
             nuevos_registros.append({
                 "device": nombre,
                 "estado": is_on,
-                "duracion_min": 5.0,
-                "timestamp": timestamp_ahora  # <--- HORA LOCAL DE CHILE
+                "duracion_min": 5.0
             })
 
-        # Insertar en la tabla de Supabase
+        # USAMOS EL NOMBRE EXACTO: historial_conexiones
         supabase.table("historial_conexiones").insert(nuevos_registros).execute()
-        print(f"✅ [{timestamp_ahora}] Datos enviados a Supabase con éxito.")
+        print(f"✅ Datos enviados a Supabase con éxito.")
 
     except Exception as e:
-        print(f"❌ Error durante la ejecución: {e}")
+        print(f"❌ Error: {e}")
 
 if __name__ == "__main__":
     run_monitor()
