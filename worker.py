@@ -1,17 +1,14 @@
 import os
 import requests
 import time
+from datetime import datetime
+import pytz  # Asegúrate de que esté en tu requirements.txt
 from supabase import create_client
 
-# Configuración desde GitHub Secrets
-ZT_API_TOKEN = os.getenv("ZT_API_TOKEN")
-ZT_NETWORK_ID = os.getenv("ZT_NETWORK_ID")
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+# Configuración de zona horaria
+tz = pytz.timezone('America/Santiago')
 
-ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+# ... (tus variables de entorno y cliente supabase se mantienen igual) ...
 
 def run_monitor():
     try:
@@ -21,6 +18,8 @@ def run_monitor():
             timeout=15
         ).json()
 
+        # Generamos el timestamp con la zona horaria de Chile
+        timestamp_ahora = datetime.now(tz).isoformat()
         ahora_ms = time.time() * 1000
         nuevos_registros = []
 
@@ -32,15 +31,12 @@ def run_monitor():
             nuevos_registros.append({
                 "device": nombre,
                 "estado": is_on,
-                "duracion_min": 5.0
+                "duracion_min": 5.0,
+                "timestamp": timestamp_ahora  # <--- FORZAMOS LA HORA DE CHILE
             })
 
-        # USAMOS EL NOMBRE EXACTO: historial_conexiones
         supabase.table("historial_conexiones").insert(nuevos_registros).execute()
-        print(f"✅ Datos enviados a Supabase con éxito.")
+        print(f"✅ Datos enviados con timestamp local: {timestamp_ahora}")
 
     except Exception as e:
         print(f"❌ Error: {e}")
-
-if __name__ == "__main__":
-    run_monitor()
