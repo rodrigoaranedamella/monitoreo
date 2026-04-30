@@ -6,12 +6,12 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 import pytz
 
-# 1. Configuración de pantalla y autorefresco (60 segundos)[cite: 1]
+# 1. Configuración de pantalla y autorefresco (60 segundos)
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>div.block-container{padding-top:1rem;}</style>", unsafe_allow_html=True)
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# Conexión a Supabase[cite: 1, 5]
+# Conexión a Supabase
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 
@@ -19,11 +19,11 @@ ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SAN
 
 @st.cache_data(ttl=10)
 def obtener_estado_actual():
-    """Obtiene el estado actual y la fecha del último registro 'Conectado' (verde)[cite: 5]."""
+    """Obtiene el estado actual y la fecha del último registro 'Conectado' (verde)"""
     estados = []
     for estacion in ESTACIONES:
         try:
-            # 1. Consultar el estado más reciente (para el círculo 🟢/🔴)[cite: 5]
+            # 1. Consultar el estado más reciente (para el círculo 🟢/🔴)
             res_reciente = supabase.table("historial_conexiones") \
                 .select("*") \
                 .eq("device", estacion) \
@@ -31,7 +31,7 @@ def obtener_estado_actual():
                 .limit(1) \
                 .execute()
             
-            # 2. Consultar el último registro donde estuvo ONLINE (para la hora y cálculo de inactividad)[cite: 5]
+            # 2. Consultar el último registro donde estuvo ONLINE (para la hora y cálculo de inactividad)
             res_online = supabase.table("historial_conexiones") \
                 .select("*") \
                 .eq("device", estacion) \
@@ -41,18 +41,18 @@ def obtener_estado_actual():
                 .execute()
             
             if res_reciente.data:
-                # Determinamos si está ONLINE ahora[cite: 5]
+                # Determinamos si está ONLINE ahora
                 data_ahora = res_reciente.data[0]
                 ts_ahora = pd.to_datetime(data_ahora['timestamp']).tz_convert('America/Santiago')
                 minutos_desde_last_seen = (datetime.now(tz) - ts_ahora).total_seconds() / 60
                 is_online = data_ahora['estado'] and minutos_desde_last_seen < 15
                 
-                # Datos de la última vez que estuvo en verde[cite: 5]
+                # Datos de la última vez que estuvo en verde
                 if res_online.data:
                     data_v = res_online.data[0]
                     ts_verde = pd.to_datetime(data_v['timestamp']).tz_convert('America/Santiago')
                     
-                    # Cálculo de inactividad desde la última conexión exitosa[cite: 1]
+                    # Cálculo de inactividad desde la última conexión exitosa
                     diff_inactivo = (datetime.now(tz) - ts_verde).total_seconds() / 60
                     
                     estados.append({
@@ -71,10 +71,11 @@ def obtener_estado_actual():
 
 @st.cache_data(ttl=30)
 def cargar_datos_totales(device, fecha):
-    """Carga el historial de un dispositivo para un día específico[cite: 5]."""
+    """Carga el historial. SE ELIMINA 'Z' PARA EVITAR EL CORTE DE LAS 21:00."""
     try:
-        inicio = f"{fecha}T00:00:00Z"
-        fin = f"{fecha}T23:59:59Z"
+        # CAMBIO CLAVE: Al quitar la 'Z', pedimos el tiempo local guardado en la base de datos
+        inicio = f"{fecha}T00:00:00"
+        fin = f"{fecha}T23:59:59"
         res = supabase.table("historial_conexiones") \
             .select("*") \
             .eq("device", device) \
@@ -85,6 +86,7 @@ def cargar_datos_totales(device, fecha):
         
         df = pd.DataFrame(res.data)
         if not df.empty:
+            # Aseguramos que los datos se traten como Santiago para la gráfica
             df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
             df['duracion_real'] = df['duracion_min']
             df['diff'] = df['timestamp'].diff().dt.total_seconds() / 60
@@ -93,7 +95,7 @@ def cargar_datos_totales(device, fecha):
     except:
         return pd.DataFrame()
 
-# --- INTERFAZ DE USUARIO ---
+# --- INTERFAZ DE USUARIO (MANTENIDA IGUAL) ---
 st.markdown("### 📊 Monitor SanLeon (En Vivo)")
 
 df_actual = obtener_estado_actual()
@@ -119,7 +121,7 @@ if not df_hist.empty:
     df_hist = df_hist.sort_values('timestamp')
     df_hist['Estado_Txt'] = df_hist['estado'].apply(lambda x: "Conectado" if x else "Desconectado")
     
-    # Lógica de barras continuas[cite: 1]
+    # Lógica de barras continuas
     df_hist['fin'] = df_hist['timestamp'].shift(-1)
     
     ultimo_idx = df_hist.index[-1]
