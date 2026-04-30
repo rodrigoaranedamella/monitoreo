@@ -36,7 +36,7 @@ def obtener_estado_actual():
                 diff_min = (ahora - ts_v).total_seconds() / 60
                 
                 # Margen de 15 min para considerar ONLINE
-                esta_online = diff_min < 15
+                esta_online = diff_min < 30
                 
                 estados.append({
                     "Estación": estacion,
