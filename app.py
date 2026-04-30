@@ -12,50 +12,63 @@ import time
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>div.block-container{padding-top:1rem;}</style>", unsafe_allow_html=True)
 
-# Refresco automático cada 60 segundos
-st_autorefresh(interval=60 * 1000, key="datarefresh")
+# Refresco automático cada 2 minutos y 30 segundos (150.000 ms)
+st_autorefresh(interval=150 * 1000, key="datarefresh")
 
 # 2. Conexión y Configuración
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
-# --- NUEVA FUNCIÓN DE APOYO A LA PERSISTENCIA ---
+# --- LÓGICA DE APOYO INTELIGENTE A LA BDD ---
 def apoyo_persistencia_realtime():
-    """Esta función graba en la BDD si detecta conexión mientras usas la app"""
+    """Graba en BDD solo si no hay registros recientes (evita duplicidad con el backend)"""
     try:
-        ZT_API_TOKEN = st.secrets["ZT_API_TOKEN"]
-        ZT_NETWORK_ID = st.secrets["ZT_NETWORK_ID"]
+        # Verificar si alguien ya grabó en los últimos 5 minutos
+        ahora = datetime.now(tz)
+        hace_5_min = (ahora - timedelta(minutes=5)).isoformat()
         
-        res = requests.get(
-            f"https://api.zerotier.com/api/v1/network/{ZT_NETWORK_ID}/member",
-            headers={"Authorization": f"token {ZT_API_TOKEN}"},
-            timeout=10
-        ).json()
+        # Consultamos si hay algún registro general reciente
+        check_reciente = supabase.table("historial_conexiones") \
+            .select("timestamp") \
+            .gte("timestamp", hace_5_min) \
+            .limit(1).execute()
 
-        ahora_ms = time.time() * 1000
-        timestamp_chile = datetime.now(tz).isoformat()
-        datos_respaldo = []
-
-        for nombre in ESTACIONES:
-            m = next((item for item in res if item.get('name') == nombre), {})
-            last_seen = m.get('lastSeen', 0)
+        # Si no hay registros en los últimos 5 min, la App ejecuta el monitoreo
+        if not check_reciente.data:
+            ZT_API_TOKEN = st.secrets["ZT_API_TOKEN"]
+            ZT_NETWORK_ID = st.secrets["ZT_NETWORK_ID"]
             
-            # Si se vio hace menos de 5 min y estamos en la app, grabamos el 'checkpoint'
-            if (ahora_ms - last_seen) / 1000 < 300:
-                datos_respaldo.append({
-                    "device": nombre,
-                    "estado": True,
-                    "duracion_min": 1.0, # Registro de apoyo
-                    "timestamp": timestamp_chile
-                })
+            res = requests.get(
+                f"https://api.zerotier.com/api/v1/network/{ZT_NETWORK_ID}/member",
+                headers={"Authorization": f"token {ZT_API_TOKEN}"},
+                timeout=10
+            ).json()
 
-        if datos_respaldo:
-            supabase.table("historial_conexiones").insert(datos_respaldo).execute()
-    except Exception as e:
-        pass # Silencioso para no interrumpir la experiencia del usuario
+            ahora_ms = time.time() * 1000
+            timestamp_chile = ahora.isoformat()
+            datos_respaldo = []
 
-# Ejecutar el apoyo de grabación cada vez que la app carga/refresca
+            for nombre in ESTACIONES:
+                m = next((item for item in res if item.get('name') == nombre), {})
+                last_seen = m.get('lastSeen', 0)
+                
+                # Si está online (visto hace menos de 5 min)
+                if (ahora_ms - last_seen) / 1000 < 300:
+                    datos_respaldo.append({
+                        "device": nombre,
+                        "estado": True,
+                        "duracion_min": 5.0,
+                        "timestamp": timestamp_chile
+                    })
+
+            if datos_respaldo:
+                supabase.table("historial_conexiones").insert(datos_respaldo).execute()
+                # Opcional: st.toast("App.py: Respaldo de datos guardado")
+    except Exception:
+        pass 
+
+# Ejecutar verificación/grabación de apoyo
 apoyo_persistencia_realtime()
 
 @st.cache_data(ttl=10)
@@ -74,7 +87,7 @@ def obtener_estado_actual():
                 ts_v = pd.to_datetime(data['timestamp']).tz_convert('America/Santiago')
                 diff_min = (ahora - ts_v).total_seconds() / 60
                 
-                # Tolerancia de 30 min por retrasos de GitHub
+                # Tolerancia de 30 min para el semáforo (por retrasos de cron)
                 esta_online = diff_min < 30
                 
                 estados.append({
@@ -111,7 +124,7 @@ def cargar_grafica_timeline(device, fecha):
         return pd.DataFrame(timeline)
     except: return pd.DataFrame()
 
-# --- INTERFAZ (Frontend original intacto) ---
+# --- INTERFAZ (Original Restaurada) ---
 st.markdown("### 📊 Monitor SanLeon (En Vivo)")
 df_act = obtener_estado_actual()
 col_t, col_c = st.columns([3, 1])
