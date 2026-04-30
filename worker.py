@@ -12,14 +12,13 @@ SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 tz = pytz.timezone('America/Santiago')
 
-# Estaciones a monitorear
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def run_monitor():
     try:
-        # 1. Obtener datos de ZeroTier
+        # Consulta a ZeroTier
         res = requests.get(
             f"https://api.zerotier.com/api/v1/network/{ZT_NETWORK_ID}/member",
             headers={"Authorization": f"token {ZT_API_TOKEN}"},
@@ -28,30 +27,30 @@ def run_monitor():
 
         ahora_ms = time.time() * 1000
         timestamp_chile = datetime.now(tz).isoformat()
-        datos_para_subir = []
+        datos_a_insertar = []
 
         for nombre in ESTACIONES:
+            # Buscar el dispositivo por nombre
             m = next((item for item in res if item.get('name') == nombre), {})
-            last_seen = m.get('last_seen', m.get('lastSeen', 0))
+            last_seen = m.get('lastSeen', 0)
             
-            # Margen de 10 minutos para considerar ONLINE (600 segundos)
-            is_on = (ahora_ms - last_seen) / 1000 < 600 
+            # Si se vio hace menos de 15 min, está ONLINE (ampliamos el margen para persistencia)
+            is_on = (ahora_ms - last_seen) / 1000 < 900 
 
-            # CRÍTICO: Solo insertamos si el estado es TRUE
+            # IMPORTANTE: Solo registramos si está conectado para no ensuciar la BDD
             if is_on:
-                datos_para_subir.append({
+                datos_a_insertar.append({
                     "device": nombre,
                     "estado": True,
                     "duracion_min": 5.0,
                     "timestamp": timestamp_chile
                 })
 
-        # 2. Guardar en Supabase solo si hay alguien online
-        if datos_para_subir:
-            supabase.table("historial_conexiones").insert(datos_para_subir).execute()
-            print(f"✅ [{timestamp_chile}] Se registraron {len(datos_para_subir)} estaciones ONLINE.")
+        if datos_a_insertar:
+            supabase.table("historial_conexiones").insert(datos_a_insertar).execute()
+            print(f"✅ [{timestamp_chile}] Se grabaron {len(datos_a_insertar)} estaciones online.")
         else:
-            print(f"ℹ️ [{timestamp_chile}] Nadie online. No se insertaron registros para mantener limpia la BDD.")
+            print(f"ℹ️ [{timestamp_chile}] Nadie detectado online.")
 
     except Exception as e:
         print(f"❌ Error en el worker: {e}")
