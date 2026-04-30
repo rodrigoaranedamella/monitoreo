@@ -11,7 +11,7 @@ st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_
 st.markdown("<style>div.block-container{padding-top:1rem;}</style>", unsafe_allow_html=True)
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# Conexión a Supabase[cite: 1, 5]
+# Conexión a Supabase[cite: 5]
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz = pytz.timezone('America/Santiago')
 
@@ -19,11 +19,11 @@ ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SAN
 
 @st.cache_data(ttl=10)
 def obtener_estado_actual():
-    """Obtiene el estado actual y la fecha del último registro 'Conectado' (verde)[cite: 5]."""
+    """Obtiene el estado actual y el último registro 'Conectado' (verde)[cite: 5]."""
     estados = []
     for estacion in ESTACIONES:
         try:
-            # 1. Consultar el estado más reciente (para el círculo 🟢/🔴)[cite: 5]
+            # 1. Estado más reciente[cite: 5]
             res_reciente = supabase.table("historial_conexiones") \
                 .select("*") \
                 .eq("device", estacion) \
@@ -31,7 +31,7 @@ def obtener_estado_actual():
                 .limit(1) \
                 .execute()
             
-            # 2. Consultar el último registro donde estuvo ONLINE (para la hora y cálculo de inactividad)[cite: 5]
+            # 2. Último registro ONLINE exitoso[cite: 5]
             res_online = supabase.table("historial_conexiones") \
                 .select("*") \
                 .eq("device", estacion) \
@@ -41,18 +41,16 @@ def obtener_estado_actual():
                 .execute()
             
             if res_reciente.data:
-                # Determinamos si está ONLINE ahora[cite: 5]
                 data_ahora = res_reciente.data[0]
                 ts_ahora = pd.to_datetime(data_ahora['timestamp']).tz_convert('America/Santiago')
                 minutos_desde_last_seen = (datetime.now(tz) - ts_ahora).total_seconds() / 60
+                # Se considera ONLINE si el registro es menor a 15 min y el estado es True[cite: 5]
                 is_online = data_ahora['estado'] and minutos_desde_last_seen < 15
                 
-                # Datos de la última vez que estuvo en verde[cite: 5]
                 if res_online.data:
                     data_v = res_online.data[0]
-                    ts_verde = pd.to_datetime(data_v['timestamp']).tz_convert('America/Santiago')
+                    ts_verde = pd.to_datetime(data_v['timestamp']).tz_convert('Santiago') # Eliminado tz_convert redundante
                     
-                    # Cálculo de inactividad desde la última conexión exitosa[cite: 1]
                     diff_inactivo = (datetime.now(tz) - ts_verde).total_seconds() / 60
                     
                     estados.append({
@@ -64,17 +62,19 @@ def obtener_estado_actual():
                 else:
                     estados.append({"Estación": estacion, "Estado": "🔴 OFFLINE", "Última conexión (OK)": "Nunca", "Inactivo desde OK": "--"})
             else:
-                estados.append({"Estación": estacion, "Estado": "⚪ SIN DATOS", "Última conexión (OK)": "--", "Inactivo desde OK": "--"})
+                estados.append({"Estación": estacion, "Estado": "⚪ SIN DATOS", "Última conexión (OK)": "--", "Inactivo hace": "--"})
         except:
             continue
     return pd.DataFrame(estados)
 
 @st.cache_data(ttl=30)
 def cargar_datos_totales(device, fecha):
-    """Carga el historial de un dispositivo para un día específico[cite: 5]."""
+    """Carga el historial. MODIFICADO: Eliminada la 'Z' para evitar desfase UTC[cite: 1, 5]."""
     try:
-        inicio = f"{fecha}T00:00:00Z"
-        fin = f"{fecha}T23:59:59Z"
+        # CORRECCIÓN AQUÍ: Se eliminó el sufijo Z para que la consulta use el tiempo local correcto[cite: 5]
+        inicio = f"{fecha}T00:00:00"
+        fin = f"{fecha}T23:59:59"
+        
         res = supabase.table("historial_conexiones") \
             .select("*") \
             .eq("device", device) \
@@ -90,10 +90,10 @@ def cargar_datos_totales(device, fecha):
             df['diff'] = df['timestamp'].diff().dt.total_seconds() / 60
             df.loc[df['diff'] <= 5.5, 'duracion_real'] = df['diff']
         return df
-    except:
+    except Exception as e:
         return pd.DataFrame()
 
-# --- INTERFAZ DE USUARIO ---
+# --- INTERFAZ ---
 st.markdown("### 📊 Monitor SanLeon (En Vivo)")
 
 df_actual = obtener_estado_actual()
@@ -103,16 +103,15 @@ with col_tabla:
     if not df_actual.empty:
         st.table(df_actual) 
     else:
-        st.warning("Cargando datos desde la base de datos...")
+        st.warning("Cargando datos...")
 
 with col_ctrl:
     st.caption(f"🕒 Sincronización: {datetime.now(tz).strftime('%H:%M:%S')}")
     est_sel = st.selectbox("Seleccionar Estación", ESTACIONES, index=4)
     fec_sel = st.date_input("Fecha de consulta", value=datetime.now(tz).date())
 
-# --- GRÁFICA DE ACTIVIDAD (CONTINUA) ---
+# --- GRÁFICA CONTINUA ---
 df_hist = cargar_datos_totales(est_sel, fec_sel)
-
 st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
 if not df_hist.empty:
@@ -139,17 +138,13 @@ if not df_hist.empty:
     )
 
     fig.update_layout(
-        height=200,
-        showlegend=True,
-        margin=dict(l=0, r=20, t=10, b=10),
+        height=200, showlegend=True, margin=dict(l=0, r=20, t=10, b=10),
         xaxis=dict(dtick=7200000, tickformat="%H:%M", title="Hora del día"),
-        yaxis=dict(visible=False),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)"
+        yaxis=dict(visible=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)"
     )
     st.plotly_chart(fig, use_container_width=True)
 
     min_conectado = df_hist[df_hist['estado'] == True]['duracion_real'].sum()
     st.info(f"⏱️ **Tiempo Total Conectado:** {int(min_conectado // 60)}h {int(min_conectado % 60)}min")
 else:
-    st.info(f"No hay registros de historial para {est_sel} en la fecha seleccionada.")
+    st.info(f"No hay registros para {est_sel} en la fecha seleccionada.")
