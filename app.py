@@ -6,7 +6,7 @@ from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 import pytz
 
-# Configuración inicial
+# Configuración de pantalla
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 st.markdown("<style>div.block-container{padding-top:1rem;}</style>", unsafe_allow_html=True)
 st_autorefresh(interval=60 * 1000, key="datarefresh")
@@ -18,90 +18,87 @@ ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SAN
 
 @st.cache_data(ttl=10)
 def obtener_estado_actual():
-    """Calcula el estado actual basándose en la ausencia de datos (descarte)"""
     estados = []
     ahora = datetime.now(tz)
-    
     for estacion in ESTACIONES:
         try:
-            res = supabase.table("historial_conexiones").select("*").eq("device", estacion).order("timestamp", desc=True).limit(1).execute()
+            # FILTRO CRÍTICO: Solo buscamos el último registro que sea TRUE (Conectado)
+            res = supabase.table("historial_conexiones") \
+                .select("*") \
+                .eq("device", estacion) \
+                .eq("estado", True) \
+                .order("timestamp", desc=True) \
+                .limit(1).execute()
             
             if res.data:
                 data = res.data[0]
-                ts_ultimo = pd.to_datetime(data['timestamp']).tz_convert('America/Santiago')
-                minutos_desde_ultimo = (ahora - ts_ultimo).total_seconds() / 60
+                ts_v = pd.to_datetime(data['timestamp']).tz_convert('America/Santiago')
+                diff_min = (ahora - ts_v).total_seconds() / 60
                 
-                # Si el último registro 'True' fue hace menos de 12 min, sigue ONLINE
-                esta_online = minutos_desde_ultimo < 12
+                # Si el último "OK" fue hace menos de 15 min, está ONLINE
+                esta_online = diff_min < 15
                 
                 estados.append({
                     "Estación": estacion,
                     "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
-                    "Última conexión (OK)": ts_ultimo.strftime('%Y-%m-%d %H:%M:%S'),
-                    "Inactivo desde OK": "0 min" if esta_online else f"{int(minutos_desde_ultimo)} min"
+                    "Última conexión (OK)": ts_v.strftime('%Y-%m-%d %H:%M:%S'),
+                    "Inactivo desde OK": "0 min" if esta_online else f"{int(diff_min)} min"
                 })
             else:
-                estados.append({"Estación": estacion, "Estado": "🔴 OFFLINE", "Última conexión (OK)": "Sin registros", "Inactivo desde OK": "--"})
-        except:
-            continue
+                estados.append({"Estación": estacion, "Estado": "🔴 OFFLINE", "Última conexión (OK)": "Sin datos hoy", "Inactivo desde OK": "--"})
+        except: continue
     return pd.DataFrame(estados)
 
 @st.cache_data(ttl=30)
-def cargar_datos_grafica(device, fecha):
-    """Reconstruye la línea de tiempo insertando bloques rojos donde hay huecos de tiempo"""
+def cargar_grafica_descarte(device, fecha):
     try:
         inicio, fin = f"{fecha}T00:00:00", f"{fecha}T23:59:59"
-        res = supabase.table("historial_conexiones").select("*").eq("device", device).gte("timestamp", inicio).lte("timestamp", fin).order("timestamp").execute()
+        # Solo cargamos registros TRUE para la gráfica
+        res = supabase.table("historial_conexiones").select("*") \
+            .eq("device", device) \
+            .eq("estado", True) \
+            .gte("timestamp", inicio).lte("timestamp", fin).order("timestamp").execute()
         
-        df_base = pd.DataFrame(res.data)
-        if df_base.empty: return pd.DataFrame()
+        df = pd.DataFrame(res.data)
+        if df.empty: return pd.DataFrame()
 
-        df_base['timestamp'] = pd.to_datetime(df_base['timestamp']).dt.tz_convert('America/Santiago')
-        
+        df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
         timeline = []
-        for i in range(len(df_base)):
-            actual = df_base.iloc[i]['timestamp']
-            # Bloque Verde (Conectado)
-            timeline.append({'Inicio': actual, 'Fin': actual + timedelta(minutes=5), 'Estado': 'Conectado'})
-            
-            # Bloque Rojo (Desconectado por descarte)
-            if i < len(df_base) - 1:
-                siguiente = df_base.iloc[i+1]['timestamp']
-                # Si hay un hueco mayor a 10 min, rellenamos con rojo
-                if (siguiente - actual).total_seconds() / 60 > 10:
-                    timeline.append({'Inicio': actual + timedelta(minutes=5), 'Fin': siguiente, 'Estado': 'Desconectado'})
-        
+        for i in range(len(df)):
+            curr = df.iloc[i]['timestamp']
+            timeline.append({'Inicio': curr, 'Fin': curr + timedelta(minutes=5), 'Estado': 'Conectado'})
+            if i < len(df) - 1:
+                prox = df.iloc[i+1]['timestamp']
+                # Si hay más de 12 min de silencio, marcamos desconexión (descarte)
+                if (prox - curr).total_seconds() / 60 > 12:
+                    timeline.append({'Inicio': curr + timedelta(minutes=5), 'Fin': prox, 'Estado': 'Desconectado'})
         return pd.DataFrame(timeline)
-    except:
-        return pd.DataFrame()
+    except: return pd.DataFrame()
 
 # --- INTERFAZ ---
 st.markdown("### 📊 Monitor SanLeon (En Vivo)")
-df_actual = obtener_estado_actual()
+df_act = obtener_estado_actual()
 col_t, col_c = st.columns([3, 1])
 
 with col_t:
-    if not df_actual.empty:
-        st.table(df_actual)
-    else:
-        st.warning("Esperando datos de la base de datos...")
+    if not df_act.empty:
+        st.table(df_act)
 
 with col_c:
     st.caption(f"🕒 Sincronización: {datetime.now(tz).strftime('%H:%M:%S')}")
     est_sel = st.selectbox("Seleccionar Estación", ESTACIONES, index=4)
-    fec_sel = st.date_input("Fecha de consulta", value=datetime.now(tz).date())
+    fec_sel = st.date_input("Fecha", value=datetime.now(tz).date())
 
-st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
-df_g = cargar_datos_grafica(est_sel, fec_sel)
+st.markdown(f"#### 📈 Historial: {est_sel}")
+df_g = cargar_grafica_descarte(est_sel, fec_sel)
 
 if not df_g.empty:
     fig = px.timeline(df_g, x_start="Inicio", x_end="Fin", y=[est_sel]*len(df_g), color="Estado",
                      color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
                      range_x=[f"{fec_sel} 00:00:00", f"{fec_sel} 23:59:59"])
-    
-    fig.update_layout(height=200, showlegend=True, margin=dict(l=0, r=20, t=10, b=10),
-                      xaxis=dict(dtick=7200000, tickformat="%H:%M", title="Hora del día"),
-                      yaxis=dict(visible=False), plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(height=180, showlegend=True, margin=dict(l=0, r=20, t=10, b=10),
+                      xaxis=dict(dtick=7200000, tickformat="%H:%M"), yaxis=dict(visible=False),
+                      plot_bgcolor="rgba(0,0,0,0)", paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info(f"No hay actividad registrada para {est_sel} en esta fecha.")
+    st.info("No hay actividad registrada para esta fecha.")
