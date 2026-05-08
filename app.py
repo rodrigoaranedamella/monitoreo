@@ -11,7 +11,7 @@ import time
 # 1. Configuración de pantalla
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilos CSS específicos
+# Estilos CSS
 st.markdown("""
     <style>
     div.block-container { padding-top: 1rem; }
@@ -30,7 +30,7 @@ st.markdown("""
         background-color: black;
         padding: 10px;
         border-radius: 4px;
-        max-width: 85%; 
+        max-width: 85%;
         margin: 0 auto;
     }
     </style>
@@ -81,7 +81,7 @@ def obtener_estado_actual():
                 estados.append({
                     "Estación": estacion, 
                     "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
-                    # Modificación: Se incluye la fecha (%d-%m-%Y) además de la hora
+                    # CAMBIO SOLICITADO: Fecha y Hora en la tabla
                     "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
                     "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
                 })
@@ -143,6 +143,7 @@ if not df_g.empty:
     df_conectado = df_g[df_g['Estado'] == 'Conectado']
     df_desconectado = df_g[df_g['Estado'] == 'Desconectado']
 
+    # Barras VERDES (Conectado) - Grosor normal
     for _, row in df_conectado.iterrows():
         fig.add_trace(go.Bar(
             base=[row['Inicio']], x=[row['Fin'] - row['Inicio']], y=[est_sel],
@@ -150,6 +151,7 @@ if not df_g.empty:
             hovertemplate="Conectado<extra></extra>"
         ))
 
+    # Barras ROJAS (Desconectado) - Más delgadas
     for _, row in df_desconectado.iterrows():
         fig.add_trace(go.Bar(
             base=[row['Inicio']], x=[row['Fin'] - row['Inicio']], y=[est_sel],
