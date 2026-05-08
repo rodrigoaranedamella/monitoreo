@@ -11,7 +11,7 @@ import time
 # 1. Configuración de pantalla
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilos CSS: Línea de 0.5mm, fondo negro para la gráfica y cuadro azul
+# Estilos CSS específicos
 st.markdown("""
     <style>
     div.block-container { padding-top: 1rem; }
@@ -24,11 +24,14 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 15px;
     }
+    /* Recuadro de 0.5mm rodeando la gráfica con fondo negro */
     .graph-frame {
         background-color: black;
-        border: 0.5px solid white; /* Línea muy fina de 0.5mm */
-        padding: 10px;
+        border: 0.5px solid white; 
+        padding: 5px;
         border-radius: 2px;
+        max-width: 90%; /* Menos ancha */
+        margin: 0 auto;  /* Centrada */
     }
     </style>
     """, unsafe_allow_html=True)
@@ -42,7 +45,6 @@ tz_chile = pytz.timezone('America/Santiago')
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
 def apoyo_persistencia_5min():
-    """Graba en BDD cada 5 minutos usando la zona horaria correcta"""
     try:
         ahora = datetime.now(tz_chile)
         hace_poco = (ahora - timedelta(minutes=4, seconds=50)).isoformat()
@@ -120,6 +122,7 @@ def cargar_grafica_timeline(device, fecha_str):
             if i < len(df) - 1:
                 prox = df.iloc[i+1]['timestamp']
                 if (prox - fin_bloque).total_seconds() / 60 > 2:
+                    # Las desconexiones se marcan con el estado 'Desconectado' para el color Rojo
                     timeline.append({'Inicio': fin_bloque, 'Fin': prox, 'Estado': 'Desconectado'})
         
         return pd.DataFrame(timeline), total_minutos
@@ -152,7 +155,7 @@ with col_t:
 
 st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
-# Contenedor con marco fino blanco y fondo negro
+# Contenedor con marco fino blanco (0.5mm) y dimensiones ajustadas
 st.markdown('<div class="graph-frame">', unsafe_allow_html=True)
 if not df_g.empty:
     rango_inicio = f"{fec_sel} 00:00:00"
@@ -160,21 +163,23 @@ if not df_g.empty:
     
     fig = px.timeline(
         df_g, x_start="Inicio", x_end="Fin", y=[est_sel]*len(df_g), color="Estado",
-        color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
+        color_discrete_map={"Conectado": "#00CC96", "Desconectado": "red"}, # Desconexiones en Rojo
         range_x=[rango_inicio, rango_fin]
     )
     
     fig.update_layout(
-        height=180, showlegend=False, 
-        margin=dict(l=10, r=50, t=10, b=30), # Margen inferior (b=30) y derecho (r=50) para legibilidad
+        height=120, # Más delgada (altura reducida)
+        showlegend=False, 
+        margin=dict(l=10, r=60, t=5, b=25), # Margen derecho amplio para el 23:59
         plot_bgcolor="black",
         paper_bgcolor="black",
-        font=dict(color="white"), # Horarios en blanco
+        font=dict(color="white"),
         xaxis=dict(
             dtick=7200000, tickformat="%H:%M",
-            showgrid=True, gridcolor="#333333", # Rejilla tenue
+            showgrid=True, gridcolor="#222222",
             range=[rango_inicio, rango_fin],
-            color="white"
+            color="white",
+            tickvals=[f"{fec_sel} {h:02d}:00:00" for h in range(0, 25, 2)] + [rango_fin]
         ),
         yaxis=dict(visible=False)
     )
