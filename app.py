@@ -11,7 +11,7 @@ import time
 # 1. Configuración de pantalla
 st.set_page_config(page_title="Monitor SanLeon", layout="wide", initial_sidebar_state="collapsed")
 
-# Estilos CSS corregidos: Línea de demarcación ultra fina y márgenes para etiquetas
+# Estilos CSS: Línea de 0.5mm, fondo negro para la gráfica y cuadro azul
 st.markdown("""
     <style>
     div.block-container { padding-top: 1rem; }
@@ -24,12 +24,11 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 15px;
     }
-    .graph-container {
-        background-color: white;
-        border: 0.5px solid #eeeeee; /* Línea ultra fina */
+    .graph-frame {
+        background-color: black;
+        border: 0.5px solid white; /* Línea muy fina de 0.5mm */
         padding: 10px;
-        border-radius: 4px;
-        margin-top: 10px;
+        border-radius: 2px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -37,13 +36,13 @@ st.markdown("""
 # Refresco cada 1 minuto
 st_autorefresh(interval=60 * 1000, key="datarefresh")
 
-# 2. Conexión y Configuración (Chile UTC-4 / UTC-3)
+# 2. Conexión y Configuración de Zona Horaria (Chile)
 supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 tz_chile = pytz.timezone('America/Santiago')
 ESTACIONES = ["Marian_SANLEON", "Andrea_SANLEON", "Carmily_SANLEON", "Matias_SANLEON", "Jennifer_SANLEON", "Jennifer2_SANLEON"]
 
 def apoyo_persistencia_5min():
-    """Graba en BDD cada 5 min si la app está abierta"""
+    """Graba en BDD cada 5 minutos usando la zona horaria correcta"""
     try:
         ahora = datetime.now(tz_chile)
         hace_poco = (ahora - timedelta(minutes=4, seconds=50)).isoformat()
@@ -94,7 +93,6 @@ def obtener_estado_actual():
 
 @st.cache_data(ttl=30)
 def cargar_grafica_timeline(device, fecha_str):
-    """Consulta histórica con manejo dinámico de zona horaria Chile"""
     try:
         fecha_obj = datetime.strptime(str(fecha_str), '%Y-%m-%d')
         inicio_dt = tz_chile.localize(datetime.combine(fecha_obj, datetime.min.time()))
@@ -134,10 +132,9 @@ df_act = obtener_estado_actual()
 col_t, col_c = st.columns([2, 1])
 
 with col_c:
-    st.caption(f"🕒 Sincronización Chile: {datetime.now(tz_chile).strftime('%H:%M:%S')}")
+    st.caption(f"🕒 Sincronización Local: {datetime.now(tz_chile).strftime('%H:%M:%S')}")
     est_sel = st.selectbox("Estación", ESTACIONES, index=4)
-    fec_sel = st.date_input("Fecha", value=datetime.now(tz_chile).date())
-    
+    fec_sel = st.date_input("Fecha de consulta", value=datetime.now(tz_chile).date())
     df_g, total_min = cargar_grafica_timeline(est_sel, fec_sel)
     
     horas = int(total_min // 60)
@@ -146,7 +143,7 @@ with col_c:
         <div class="blue-box">
             ⏱️ TIEMPO TOTAL CONECTADO<br>
             <span style="font-size: 26px;">{horas}h {mins}m</span><br>
-            <small>Horario Chile</small>
+            <small>Basado en registros históricos Chile</small>
         </div>
         """, unsafe_allow_html=True)
 
@@ -155,37 +152,33 @@ with col_t:
 
 st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
-# Contenedor de la gráfica con demarcación fina
-with st.container():
-    st.markdown('<div class="graph-container">', unsafe_allow_html=True)
-    if not df_g.empty:
-        r_inicio = f"{fec_sel} 00:00:00"
-        r_fin = f"{fec_sel} 23:59:59"
-        
-        fig = px.timeline(
-            df_g, x_start="Inicio", x_end="Fin", y=[est_sel]*len(df_g), 
-            color="Estado",
-            color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
-            range_x=[r_inicio, r_fin]
-        )
-        
-        fig.update_layout(
-            height=200, # Aumentado ligeramente para dar espacio a las etiquetas del eje X
-            showlegend=False,
-            margin=dict(l=10, r=60, t=10, b=40), # Margen inferior (b=40) para ver horarios y derecho (r=60) para 23:59
-            plot_bgcolor="white",
-            paper_bgcolor="white",
-            xaxis=dict(
-                dtick=7200000, # Cada 2 horas
-                tickformat="%H:%M",
-                showgrid=True,
-                gridcolor="#f5f5f5",
-                range=[r_inicio, r_fin],
-                side="bottom" # Asegura que los horarios estén abajo
-            ),
-            yaxis=dict(visible=False)
-        )
-        st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    else:
-        st.info(f"Sin registros para {est_sel} el {fec_sel}.")
-    st.markdown('</div>', unsafe_allow_html=True)
+# Contenedor con marco fino blanco y fondo negro
+st.markdown('<div class="graph-frame">', unsafe_allow_html=True)
+if not df_g.empty:
+    rango_inicio = f"{fec_sel} 00:00:00"
+    rango_fin = f"{fec_sel} 23:59:59"
+    
+    fig = px.timeline(
+        df_g, x_start="Inicio", x_end="Fin", y=[est_sel]*len(df_g), color="Estado",
+        color_discrete_map={"Conectado": "#00CC96", "Desconectado": "#EF553B"},
+        range_x=[rango_inicio, rango_fin]
+    )
+    
+    fig.update_layout(
+        height=180, showlegend=False, 
+        margin=dict(l=10, r=50, t=10, b=30), # Margen inferior (b=30) y derecho (r=50) para legibilidad
+        plot_bgcolor="black",
+        paper_bgcolor="black",
+        font=dict(color="white"), # Horarios en blanco
+        xaxis=dict(
+            dtick=7200000, tickformat="%H:%M",
+            showgrid=True, gridcolor="#333333", # Rejilla tenue
+            range=[rango_inicio, rango_fin],
+            color="white"
+        ),
+        yaxis=dict(visible=False)
+    )
+    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+else:
+    st.info(f"No hay registros de conexión para {est_sel} el día {fec_sel}.")
+st.markdown('</div>', unsafe_allow_html=True)
