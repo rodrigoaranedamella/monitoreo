@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from supabase import create_client
-import plotly.graph_objects as go
+import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 import pytz
@@ -24,14 +24,14 @@ st.markdown("""
         font-weight: bold;
         margin-bottom: 15px;
     }
-    /* Recuadro de 0.5mm que encapsula la gráfica */
-    .graph-encapsulate {
-        border: 0.5px solid white;
+    /* Recuadro de 0.5mm rodeando la gráfica con fondo negro */
+    .graph-frame {
         background-color: black;
-        padding: 10px;
-        border-radius: 4px;
-        max-width: 85%; /* Un poco menos ancha como pediste */
-        margin: 0 auto;
+        border: 0.5px solid white; 
+        padding: 5px;
+        border-radius: 2px;
+        max-width: 90%; /* Menos ancha */
+        margin: 0 auto;  /* Centrada */
     }
     </style>
     """, unsafe_allow_html=True)
@@ -49,18 +49,23 @@ def apoyo_persistencia_5min():
         ahora = datetime.now(tz_chile)
         hace_poco = (ahora - timedelta(minutes=4, seconds=50)).isoformat()
         check = supabase.table("historial_conexiones").select("id").gte("timestamp", hace_poco).limit(1).execute()
+
         if not check.data:
             res = requests.get(
                 f"https://api.zerotier.com/api/v1/network/{st.secrets['ZT_NETWORK_ID']}/member",
                 headers={"Authorization": f"token {st.secrets['ZT_API_TOKEN']}"}, timeout=10
             ).json()
+
             timestamp_iso = ahora.isoformat()
             datos = []
             for nombre in ESTACIONES:
                 m = next((item for item in res if item.get('name') == nombre), {})
                 last_seen = m.get('lastSeen', 0)
                 if (time.time() * 1000 - last_seen) / 1000 < 600:
-                    datos.append({"device": nombre, "estado": True, "duracion_min": 5.0, "timestamp": timestamp_iso})
+                    datos.append({
+                        "device": nombre, "estado": True,
+                        "duracion_min": 5.0, "timestamp": timestamp_iso
+                    })
             if datos:
                 supabase.table("historial_conexiones").insert(datos).execute()
     except Exception: pass
@@ -94,26 +99,38 @@ def cargar_grafica_timeline(device, fecha_str):
         fecha_obj = datetime.strptime(str(fecha_str), '%Y-%m-%d')
         inicio_dt = tz_chile.localize(datetime.combine(fecha_obj, datetime.min.time()))
         fin_dt = tz_chile.localize(datetime.combine(fecha_obj, datetime.max.time()))
-        res = supabase.table("historial_conexiones").select("*").eq("device", device).eq("estado", True).gte("timestamp", inicio_dt.isoformat()).lte("timestamp", fin_dt.isoformat()).order("timestamp").execute()
+        
+        res = supabase.table("historial_conexiones").select("*") \
+            .eq("device", device).eq("estado", True) \
+            .gte("timestamp", inicio_dt.isoformat()) \
+            .lte("timestamp", fin_dt.isoformat()) \
+            .order("timestamp").execute()
+        
         df = pd.DataFrame(res.data)
         if df.empty: return pd.DataFrame(), 0
+        
         df['timestamp'] = pd.to_datetime(df['timestamp']).dt.tz_convert('America/Santiago')
         total_minutos = df['duracion_min'].sum()
+        
         timeline = []
         for i in range(len(df)):
             curr = df.iloc[i]['timestamp']
             duracion = float(df.iloc[i]['duracion_min'])
             fin_bloque = curr + timedelta(minutes=duracion)
             timeline.append({'Inicio': curr, 'Fin': fin_bloque, 'Estado': 'Conectado'})
+            
             if i < len(df) - 1:
                 prox = df.iloc[i+1]['timestamp']
                 if (prox - fin_bloque).total_seconds() / 60 > 2:
+                    # Las desconexiones se marcan con el estado 'Desconectado' para el color Rojo
                     timeline.append({'Inicio': fin_bloque, 'Fin': prox, 'Estado': 'Desconectado'})
+        
         return pd.DataFrame(timeline), total_minutos
     except Exception: return pd.DataFrame(), 0
 
 # --- INTERFAZ ---
 st.markdown("### 📊 Monitor SanLeon")
+
 df_act = obtener_estado_actual()
 col_t, col_c = st.columns([2, 1])
 
@@ -122,57 +139,51 @@ with col_c:
     est_sel = st.selectbox("Estación", ESTACIONES, index=4)
     fec_sel = st.date_input("Fecha de consulta", value=datetime.now(tz_chile).date())
     df_g, total_min = cargar_grafica_timeline(est_sel, fec_sel)
-    horas, mins = int(total_min // 60), int(total_min % 60)
-    st.markdown(f'<div class="blue-box">⏱️ TIEMPO TOTAL CONECTADO<br><span style="font-size: 26px;">{horas}h {mins}m</span></div>', unsafe_allow_html=True)
+    
+    horas = int(total_min // 60)
+    mins = int(total_min % 60)
+    st.markdown(f"""
+        <div class="blue-box">
+            ⏱️ TIEMPO TOTAL CONECTADO<br>
+            <span style="font-size: 26px;">{horas}h {mins}m</span><br>
+            <small>Basado en registros históricos Chile</small>
+        </div>
+        """, unsafe_allow_html=True)
 
 with col_t:
     st.table(df_act)
 
 st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
-# Contenedor que ENCAPSULA la gráfica
-st.markdown('<div class="graph-encapsulate">', unsafe_allow_html=True)
+# Contenedor con marco fino blanco (0.5mm) y dimensiones ajustadas
+st.markdown('<div class="graph-frame">', unsafe_allow_html=True)
 if not df_g.empty:
     rango_inicio = f"{fec_sel} 00:00:00"
     rango_fin = f"{fec_sel} 23:59:59"
     
-    fig = go.Figure()
-
-    # Separamos los datos para darles grosores distintos
-    df_conectado = df_g[df_g['Estado'] == 'Conectado']
-    df_desconectado = df_g[df_g['Estado'] == 'Desconectado']
-
-    # Barras VERDES (Conectado) - Grosor normal
-    for _, row in df_conectado.iterrows():
-        fig.add_trace(go.Bar(
-            base=[row['Inicio']], x=[row['Fin'] - row['Inicio']], y=[est_sel],
-            orientation='h', marker_color='#00CC96', width=0.6, showlegend=False,
-            hovertemplate="Conectado<extra></extra>"
-        ))
-
-    # Barras ROJAS (Desconectado) - Más delgadas en altura
-    for _, row in df_desconectado.iterrows():
-        fig.add_trace(go.Bar(
-            base=[row['Inicio']], x=[row['Fin'] - row['Inicio']], y=[est_sel],
-            orientation='h', marker_color='red', width=0.2, showlegend=False,
-            hovertemplate="Desconectado<extra></extra>"
-        ))
-
+    fig = px.timeline(
+        df_g, x_start="Inicio", x_end="Fin", y=[est_sel]*len(df_g), color="Estado",
+        color_discrete_map={"Conectado": "#00CC96", "Desconectado": "red"}, # Desconexiones en Rojo
+        range_x=[rango_inicio, rango_fin]
+    )
+    
     fig.update_layout(
-        height=130, barmode='stack', plot_bgcolor="black", paper_bgcolor="black",
-        margin=dict(l=10, r=60, t=10, b=30),
+        height=120, # Más delgada (altura reducida)
+        showlegend=False, 
+        margin=dict(l=10, r=60, t=5, b=25), # Margen derecho amplio para el 23:59
+        plot_bgcolor="black",
+        paper_bgcolor="black",
+        font=dict(color="white"),
         xaxis=dict(
+            dtick=7200000, tickformat="%H:%M",
+            showgrid=True, gridcolor="#222222",
             range=[rango_inicio, rango_fin],
-            type='date', color="white", showgrid=True, gridcolor="#222222",
-            tickformat="%H:%M",
-            # Forzamos que aparezca 00:00 y 23:59
-            tickvals=[rango_inicio, f"{fec_sel} 04:00:00", f"{fec_sel} 08:00:00", 
-                      f"{fec_sel} 12:00:00", f"{fec_sel} 16:00:00", f"{fec_sel} 20:00:00", rango_fin],
-            ticktext=["00:00", "04:00", "08:00", "12:00", "16:00", "20:00", "23:59"]
+            color="white",
+            tickvals=[f"{fec_sel} {h:02d}:00:00" for h in range(0, 25, 2)] + [rango_fin]
         ),
         yaxis=dict(visible=False)
     )
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 else:
-    st.info(f"Sin registros para {est_sel} el día {fec_sel}.")
+    st.info(f"No hay registros de conexión para {est_sel} el día {fec_sel}.")
 st.markdown('</div>', unsafe_allow_html=True)
