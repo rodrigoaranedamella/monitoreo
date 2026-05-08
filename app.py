@@ -85,7 +85,7 @@ def obtener_estado_actual():
                 esta_online = diff_min < 20
                 estados.append({
                     "Estación": estacion, "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
-                    "Última conexión": ts_v.strftime('%H:%M:%S'),
+                    "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
                     "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
                 })
             else:
