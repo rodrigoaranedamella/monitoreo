@@ -3,6 +3,7 @@ import pandas as pd
 from supabase import create_client
 import plotly.express as px
 from streamlit_autorefresh import st_autorefresh
+import plotly.graph_objects as go  # <--- Verifica que esta línea exista
 from datetime import datetime, timedelta
 import pytz
 import requests
@@ -83,11 +84,18 @@ def obtener_estado_actual():
                 ts_v = pd.to_datetime(res.data[0]['timestamp']).astimezone(tz_chile)
                 diff_min = (ahora - ts_v).total_seconds() / 60
                 esta_online = diff_min < 20
-                estados.append({
-                    "Estación": estacion, "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
-                    "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
-                    "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
-                })
+                # Busca esta parte dentro de la función obtener_estado_actual y cámbiala:
+estados.append({
+    "Estación": estacion, 
+    "Estado": "<span style='font-size: 22px; color: #00CC96;'>●</span> ONLINE" if esta_online else "<span style='font-size: 12px; color: red;'>●</span> OFFLINE",
+    "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
+    "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
+})
+                # estados.append({
+                #    "Estación": estacion, "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
+                 #   "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
+                  #  "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
+                #})
             else:
                 estados.append({"Estación": estacion, "Estado": "🔴 OFFLINE", "Última conexión": "Sin datos", "Inactivo": "--"})
         except: continue
@@ -152,8 +160,11 @@ with col_c:
 
 with col_t:
     st.table(df_act)
+# Busca donde dice: st.table(df_act)
+# Y cámbialo por esto:
+st.markdown(df_act.to_html(escape=False, index=False), unsafe_allow_html=True)
 
-st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
+# st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
 # Contenedor con marco fino blanco (0.5mm) y dimensiones ajustadas
 st.markdown('<div class="graph-frame">', unsafe_allow_html=True)
