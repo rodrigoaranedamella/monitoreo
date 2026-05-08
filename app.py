@@ -83,8 +83,7 @@ def obtener_estado_actual():
                 ts_v = pd.to_datetime(res.data[0]['timestamp']).astimezone(tz_chile)
                 diff_min = (ahora - ts_v).total_seconds() / 60
                 esta_online = diff_min < 20
-
-                 estados.append({
+                estados.append({
                     "Estación": estacion, "Estado": "🟢 ONLINE" if esta_online else "🔴 OFFLINE",
                     "Última conexión": ts_v.strftime('%d-%m-%Y %H:%M:%S'),
                     "Inactivo": f"{int(diff_min)} min" if not esta_online else "0 min"
@@ -153,7 +152,8 @@ with col_c:
 
 with col_t:
     st.table(df_act)
- st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
+
+st.markdown(f"#### 📈 Historial de Conexión: {est_sel}")
 
 # Contenedor con marco fino blanco (0.5mm) y dimensiones ajustadas
 st.markdown('<div class="graph-frame">', unsafe_allow_html=True)
