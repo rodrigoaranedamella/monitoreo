@@ -1,4 +1,14 @@
 import streamlit as st
+
+# Cambia esto a False cuando quieras bloquearla
+APP_ACTIVA = False 
+
+if not APP_ACTIVA:
+    st.warning("⚠️ Failed to load.")
+    st.stop() # Detiene la ejecución de todo lo que esté hacia abajo
+
+# --- Resto de tu código normal ---
+import streamlit as st
 import pandas as pd
 from supabase import create_client
 import plotly.express as px
